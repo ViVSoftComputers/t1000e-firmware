@@ -1,3 +1,8 @@
+/*
+ * Based on Seeed Studio T1000-E LoRaWAN tracker firmware (MIT License).
+ * Cache integration and modifications: Copyright (C) 2026 ViVSoft Computers LLC.
+ */
+
 
 #include "smtc_hal.h"
 #include "sensor.h"

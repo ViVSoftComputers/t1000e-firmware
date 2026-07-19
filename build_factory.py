@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
-Full build of T1000-E factory firmware using PlatformIO ARM GCC (GCC 12.3.1).
-Compiles ALL source files from the SES .emProject, links, generates .hex and .uf2.
-Uses the SES-generated linker script from the GNSS project.
+T1000-E Cache Firmware Build Script
+Copyright (C) 2026 ViVSoft Computers LLC
+
+Builds the T1000-E tracker firmware using PlatformIO ARM GCC (GCC 12.3.1).
+Compiles all source files from the SES .emProject, links with SoftDevice s140 7.2.0,
+and produces a combined UF2 for drag-drop flashing onto the device.
+
+Usage: python3 build_factory.py
 """
 import os, sys, re, subprocess, time, shutil, datetime
 from pathlib import Path

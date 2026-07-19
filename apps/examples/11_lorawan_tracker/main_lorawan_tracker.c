@@ -1,6 +1,6 @@
 /*
- * -----------------------------------------------------------------------------
- * --- DEPENDENCIES ------------------------------------------------------------
+ * Based on Seeed Studio T1000-E LoRaWAN tracker firmware (MIT License).
+ * Cache integration and modifications: Copyright (C) 2026 ViVSoft Computers LLC.
  */
 
 #include "main_lorawan_tracker.h"

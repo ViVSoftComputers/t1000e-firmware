@@ -1,7 +1,9 @@
 /*
- * Copyright (C) 2024-2026 ViVoSofT
+ * Copyright (C) 2026 ViVSoft Computers LLC
  *
  * Ring-buffer cache for T1000-E LoRaWAN tracker.
+ * Stores scan result packets when device is out of LoRaWAN range
+ * and replays them when connectivity returns.
  */
 
 #include "app_tracker_cache.h"

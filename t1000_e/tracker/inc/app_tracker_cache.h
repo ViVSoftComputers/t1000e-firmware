@@ -1,16 +1,9 @@
 /*
- * Copyright (C) 2024-2026 ViVoSofT
+ * Copyright (C) 2026 ViVSoft Computers LLC
  *
  * Ring-buffer cache for T1000-E LoRaWAN tracker.
- * Stores scan result packets that failed to send.
- * When connectivity returns, replay non-expired entries in FIFO order.
- *
- * Each cached packet stores:
- *   - timestamp (RTC seconds when it was cached)
- *   - length (1-128 bytes)
- *   - payload data
- *
- * Entries older than TRACKER_CACHE_TTL_SECONDS are dropped on replay.
+ * Stores scan result packets when device is out of LoRaWAN range
+ * and replays them when connectivity returns.
  */
 
 #ifndef APP_TRACKER_CACHE_H
