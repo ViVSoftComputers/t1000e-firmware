@@ -1,8 +1,20 @@
 # T1000-E Tracker Firmware — v21 Cache Edition
 
 Built: 2026-07-19
-Device: Seeed SenseCAP T1000-E (LoRaWAN tracker, nRF52840 + LR1110)
+Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + LR1110)
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
+
+## ⚠️ Before You Flash — Backup Your Factory Firmware
+
+**This is permanent.** Once flashed, the factory firmware on your device is overwritten. Before proceeding:
+
+1. Connect your T1000-E via USB-C
+2. Double-press the button rapidly to enter UF2 bootloader mode (device appears as a USB drive)
+3. Copy the file named `CURRENT.UF2` from the drive to your computer
+4. Rename it to something descriptive like `FACTORY_T1000E_BACKUP.uf2`
+5. Store it somewhere safe — this is your only path back to factory firmware
+
+You can restore factory firmware at any time by dragging the backup UF2 back onto the device in bootloader mode.
 
 ## Architecture
 
