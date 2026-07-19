@@ -1,0 +1,20 @@
+# Build outputs
+Output/
+*.o
+*.elf
+*.hex
+*.uf2
+*.map
+*.rsp
+*.d
+
+# IDE
+.ses/
+*.emProject_*
+*.emSession
+.vs/
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db
