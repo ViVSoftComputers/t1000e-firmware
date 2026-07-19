@@ -1,123 +1,132 @@
-# T1000-E LoRaWAN Tracker Firmware
+# T1000-E Tracker Firmware — v21 Cache Edition
 
-Custom firmware for the Seeed SenseCAP T1000-E LoRaWAN tracker, built from the
-[Seeed-Studio reference source](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board)
-(forked from commit `f3ad9d4`, v1.2).
+Built: 2026-07-19
+Device: Seeed SenseCAP T1000-E (LoRaWAN tracker, nRF52840 + LR1110)
+Based on: Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board (commit f3ad9d4)
 
-## Build Environment
+## What This Firmware Does
 
-| Component | Version | Notes |
-|---|---|---|
-| **Compiler** | ARM GCC 12.3.1 | Via PlatformIO (`toolchain-gccarmnoneeabi`) |
-| **SDK** | nRF5 SDK 17.1.0 | At `C:\nRF5_SDK_17.1.0_ddde560\` |
-| **SoftDevice** | s140 7.2.0 | From SDK (`components/softdevice/s140/hex/`) |
-| **UF2 converter** | Microsoft uf2conv.py | At `C:\Users\ViV\uf2conv.py` |
-| **Host** | Windows 10 | git-bash (MSYS) terminal |
+Adds a **200-entry ring-buffer cache** to the factory T1000-E firmware. When the device goes out of LoRaWAN range, sensor/GPS data is saved to cache. When it comes back in range, cached entries are replayed automatically.
 
-**CRITICAL**: SEGGER Embedded Studio 8.28a **cannot** compile this firmware.
-SES 8.28a ships GCC 15.2 which treats implicit function declarations as errors
-and uses `thumb_crt0.s` (SEGGER-specific startup). The standard nRF5 SDK GCC
-startup (`gcc_startup_nrf52840.S`) must be used instead.
+### Architecture: Producer/Consumer
 
-**We wasted 2 days trying SES before discovering this.**
+- **Producer** (`app_tracker_scan_result_send`): Every scan cycle builds the payload and saves it to cache via `tracker_cache_save()`. Never sends directly.
+- **Consumer** (`cache_consumer_trigger` + `on_modem_tx_done`): The only code path that calls `app_send_frame()`. Pulls from cache FIFO, sends confirmed uplinks, pops on ACK.
 
-## Build
+### Cache Details
+
+- 200-entry ring buffer (~33 hours at 10-min intervals)
+- 4-hour TTL (entries older than 4h are skipped on replay)
+- Drain: 3 seconds between confirmed entries (fast flush when back in range)
+- Retry: matches scan interval (no extra battery drain)
+- Only pops entries on confirmed delivery (network ACK received)
+
+### Version Identification
+
+Power-on uplink (FPort 5) ends in `XX c0 de` where XX is the firmware version byte:
+- v20: `14 c0 de`
+- v21: `15 c0 de`
+- etc.
+
+## Prerequisites to Build
+
+1. **nRF5 SDK 17.1.0** at `C:\nRF5_SDK_17.1.0_ddde560`
+   - Must include SoftDevice s140 7.2.0
+   - Must include the Seeed T1000-E project under `examples/ble_peripheral/t1000-e/`
+
+2. **PlatformIO ARM GCC toolchain** at `C:\Users\<user>\.platformio\packages\toolchain-gccarmnoneeabi\`
+   - GCC 12.3.1 (arm-none-eabi-gcc)
+   - Install via PlatformIO: `pio platform install nordicnrf52`
+
+3. **Python 3** with no special dependencies (stdlib only)
+
+4. **uf2conv.py** from Microsoft UF2 tools — placed at `C:\Users\<user>\uf2conv.py`
+
+## Source Files Modified (relative to Seeed repo)
+
+| File | Changes |
+|------|---------|
+| `apps/examples/11_lorawan_tracker/main_lorawan_tracker.c` | Cache integration: include, drain state, producer/consumer logic |
+| `t1000_e/tracker/inc/app_tracker_cache.h` | Cache engine header (NEW) |
+| `t1000_e/tracker/src/app_tracker_cache.c` | Cache engine implementation (NEW) |
+| `t1000_e/tracker/src/app_lora_packet.c` | Version byte in power-on uplink, FIRMWARE_VERSION include |
+| `pca10056/s140/11_ses_lorawan_tracker/build_factory.py` | GCC build script (NEW) |
+| `pca10056/s140/11_ses_lorawan_tracker/t1000_e_dev_kit_pca10056.ld` | GCC linker script (replaced SES one) |
+
+## How to Build
 
 ```bash
 cd C:\nRF5_SDK_17.1.0_ddde560\examples\ble_peripheral\t1000-e\pca10056\s140\11_ses_lorawan_tracker
-python build_factory.py
+python3 build_factory.py
 ```
 
-The build script:
-1. Parses the SES `.emProject` file for include paths and source files
-2. Compiles all 180 source files (including `gcc_startup_nrf52840.S`)
-3. Links using the standard nRF5 SDK GCC linker script
-4. Generates `.hex`, `.elf`, and `.uf2` output in `Output/Debug/Exe/`
+Output:
+- `Output/Debug/Exe/t1000_e_dev_kit_pca10056.elf` — compiled firmware
+- `Output/Debug/Exe/t1000-e-vXX.uf2` — combined UF2 (SoftDevice + app)
 
-### Prerequisites
+### Creating a Flashable UF2 (family 0x28860057, no MBR)
 
-- nRF5 SDK 17.1.0 at `C:\nRF5_SDK_17.1.0_ddde560\`
-- PlatformIO ARM GCC at `C:\Users\ViV\.platformio\packages\toolchain-gccarmnoneeabi\`
-- Python 3 with `intelhex`
-- Microsoft uf2conv.py at `C:\Users\ViV\uf2conv.py`
+The build script produces a UF2 with wrong family ID. Fix it:
 
-## Source Modifications from Seeed v1.2
+```bash
+UF2CONV="C:/Users/ViV/uf2conv.py"
+SD_HEX="C:/nRF5_SDK_17.1.0_ddde560/components/softdevice/s140/hex/s140_nrf52_7.2.0_softdevice.hex"
+EXE="Output/Debug/Exe"
 
-### Debug Markers (for firmware identification)
+# Build SD + App UF2s with correct family
+python3 "$UF2CONV" -f 0x28860057 -b 0x0000 -c -o "$EXE/sd.uf2" "$SD_HEX"
+python3 "$UF2CONV" -f 0x28860057 -b 0x27000 -c -o "$EXE/app.uf2" "$EXE/t1000_e_dev_kit_pca10056.hex"
 
-1. **Boot banner** (`main_lorawan_tracker.c`): Changed from `"T1000-E Tracker example"`
-   to `"T1000-E HERMES 20260719"` — visible in UART debug output on boot.
+# Concatenate, strip MBR blocks (0x0-0xFFF), fix sequence numbers
+python3 -c "
+import struct
+sd = open('$EXE/sd.uf2','rb').read()
+ap = open('$EXE/app.uf2','rb').read()
+c = sd + ap
+v = [c[b*512:(b+1)*512] for b in range(len(c)//512)
+     if struct.unpack('<I',c[b*512:b*512+4])[0]==0x0A324655
+     and struct.unpack('<I',c[b*512+4:b*512+8])[0]==0x9E5D5157
+     and struct.unpack('<I',c[b*512+12:b*512+16])[0]>=0x1000]
+t = len(v); o = bytearray()
+for i,b in enumerate(v):
+    bb = bytearray(b)
+    struct.pack_into('<II',bb,20,i,t)
+    o.extend(bb)
+open('t1000-e-vXX-cache.uf2','wb').write(o)
+print(f'Done: {len(o)} bytes, {t} blocks')
+"
+```
 
-2. **Uplink signature** (`main_lorawan_tracker.c` + `app_lora_packet.c`): Every LoRaWAN
-   uplink payload now ends with 2 bytes: `0xBE 0xEF`. Visible in ChirpStack payload
-   view as trailing `beef` hex. Power-on uplink goes from 13→15 bytes, sensor payloads
-   from 8→10 bytes, GPS payloads from 16→18 bytes.
+### Flashing
 
-### Critical GCC Compatibility Fixes
+1. Connect T1000-E via USB-C
+2. Double-press the button rapidly — device enters UF2 bootloader mode (appears as a USB drive)
+3. Drag `t1000-e-vXX-cache.uf2` onto the drive
+4. Device reboots automatically
 
-These are NOT optional — the firmware will compile but **will not boot** without them:
+## Key Design Decisions
 
-1. **Timer callback signatures** (`app_beep.c`, `app_led.c`, `app_button.c`, `app_user_timer.c`):
-   Changed all `void handler(void)` → `void handler(void *p_context)`. The nRF5 SDK
-   timer expects `app_timer_timeout_handler_t` which is `void (*)(void *)`. Wrong
-   signatures cause stack corruption and hard fault on first timer tick.
+- **GCC not SES**: SEGGER Embedded Studio couldn't compile the project (missing startup files, GCC 15 strictness). Use PlatformIO's arm-none-eabi-gcc 12.3.1.
+- **gcc_startup_nrf52840.S**: SES's thumb_crt0.s is SEGGER-specific. Must use nRF5 SDK's GCC startup file for the vector table.
+- **UF2 family 0x28860057**: T1000-E bootloader requires this family ID. Standard nRF52840 (0xADA52840) is rejected.
+- **No MBR blocks**: UF2 blocks at 0x0-0xFFF cause bootloader rejection. Must be stripped.
+- **Unconfirmed drain? NO**: v16 tried unconfirmed drain, entries were lost (SENT → popped but never arrived). Confirmed drain with ACK-based pop is correct.
+- **No callback cascade**: Calling app_send_frame from inside on_modem_tx_done is not re-entrant safe. Use timer-based cascade (3s alarm between entries).
 
-2. **GCC startup file**: Added `gcc_startup_nrf52840.S` from the nRF5 SDK. The SES
-   project uses `thumb_crt0.s` which is SEGGER-specific. Without the GCC startup,
-   the interrupt vector table is missing and the CPU executes garbage at boot.
+## Pitfalls
 
-3. **Standard GCC linker script**: Replaced the SES-generated linker script with
-   `generic_gcc_nrf52.ld` from the nRF5 SDK. The SES linker script is incompatible
-   with GCC's section naming and symbol expectations.
+- **Build cache**: If FIRMWARE_VERSION changes but the binary doesn't update, delete `Output/Debug/Obj/` and rebuild.
+- **Timer callbacks**: Must have signature `void handler(void *p_context)`, NOT `void handler(void)`. Stack corruption otherwise.
+- **Escape sequences**: The patch tool double-escapes `\n` → `\\n`. Check the binary after patching string literals.
+- **addr offset**: UF2 address field is at byte offset 12, not 8.
 
-4. **Missing includes** (for GCC strictness, not crash-critical):
-   - `smtc_hal_spi.c`: added `<string.h>`
-   - `smtc_hal_gpio.c`: added `"smtc_hal_mcu.h"`
-   - `smtc_hal_trace.c`: added `"smtc_hal_usb_cdc.h"`
-   - `smtc_hal_uart.c`: added `"smtc_hal_mcu.h"` + `"ag3335.h"`
-   - `smtc_hal_mcu.c`: added `"app_led.h"`
-   - `apps_utilities.c`: added `"smtc_hal_trace.h"`
-   - `main_lorawan_tracker.c`: added `"app_timer.h"` + forward declarations
+## v21 vs Base Firmware
 
-5. **SES RTL retarget** (`app_board.c`): Added `#ifdef __SEGGER_CC`-guarded retarget
-   stubs for SES builds only. GCC uses `-specs=nosys.specs` which provides its own.
-
-6. **flash_placement.xml**: Removed `size="0x4"` caps on `.text` and `.rodata` sections
-   that artificially limited them to 4 bytes.
-
-## Flashing
-
-The T1000-E bootloader uses UF2 family ID `0x28860057` (**not** the standard nRF52840
-`0xADA52840`). The factory UF2 confirmed this.
-
-1. Put device in DFU mode (hold button, plug USB)
-2. Drag-drop the `.uf2` file onto the USB drive
-3. Device auto-flashes and reboots
-
-The build script produces an app-only UF2. For a combined UF2 (SoftDevice + App):
-merge the SoftDevice hex with the app hex, then convert with `-f 0x28860057`.
-
-## Verification
-
-After flashing, check ChirpStack for the power-on uplink:
-- DATA_ID `0x1E` should be **15 bytes** ending in `BE EF`
-- Factory firmware is 13 bytes (no signature)
-
-## Root Cause Analysis: Why GCC 12.3.1 Build Initially Failed
-
-The SES project at `11_ses_lorawan_tracker` uses SEGGER's `thumb_crt0.s` startup
-file. When compiled with GCC (even GCC 12.3.1), this file either compiles incorrectly
-or the linker places it wrong because:
-
-1. SES linker script expects `.vectors` section — GCC startup uses `.isr_vector`
-2. SES startup expects SEGGER-specific symbols (`__SEGGER_RTL_*`) not present in GCC
-3. Without a proper vector table at 0x27000, the CPU reads garbage as the initial
-   stack pointer and reset vector → immediate hard fault → faint LED flash, nothing.
-
-The fix: use `gcc_startup_nrf52840.S` + standard nRF5 SDK GCC linker script.
-This is what the nRF5 SDK's `armgcc` examples use and is the intended GCC build path.
-
-## License
-
-Based on Seeed-Studio's reference implementation. See `README-Seeed.md` for original
-license terms.
+| Feature | Factory | v21 Cache |
+|---------|---------|-----------|
+| Out-of-range behavior | Data lost | Cached & replayed |
+| Cache size | None | 200 entries |
+| Drain speed | N/A | 3s between entries |
+| Battery impact (offline) | Normal scans | Normal scans (retry = scan interval) |
+| Power-on marker | no marker | `XX c0 de` (versioned) |
+| Sensor uplinks | `be ef` | `be ef` |

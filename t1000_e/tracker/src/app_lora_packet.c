@@ -4,6 +4,7 @@
 #include "app_board.h"
 #include "app_config_param.h"
 #include "app_lora_packet.h"
+#include "app_tracker_cache.h"
 
 uint8_t app_lora_packet_buffer[LORAWAN_APP_DATA_MAX_SIZE] = { 0 };
 uint8_t app_lora_packet_len = 0;
@@ -54,8 +55,10 @@ void app_lora_packet_power_on_uplink( void )
 
     app_lora_packet_len = 13;
 
-    app_lora_packet_buffer[app_lora_packet_len++] = 0xBE;
-    app_lora_packet_buffer[app_lora_packet_len++] = 0xEF;
+    app_lora_packet_buffer[app_lora_packet_len++] = FIRMWARE_VERSION;
+
+    app_lora_packet_buffer[app_lora_packet_len++] = 0xC0;
+    app_lora_packet_buffer[app_lora_packet_len++] = 0xDE;
 
     app_send_frame( app_lora_packet_buffer, app_lora_packet_len, false, true );
 }

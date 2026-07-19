@@ -20,7 +20,7 @@
 #include <stdbool.h>
 
 /* Firmware version - embedded in every uplink */
-#define FIRMWARE_VERSION           13
+#define FIRMWARE_VERSION           21
 
 #define TRACKER_CACHE_MAX_DEPTH   200    /* ~33h of 10-min intervals */
 #define TRACKER_CACHE_MAX_SIZE    128   /* max LoRaWAN payload size */

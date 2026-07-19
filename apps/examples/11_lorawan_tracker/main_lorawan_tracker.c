@@ -28,6 +28,7 @@
 #include "app_button.h"
 #include "app_led.h"
 #include "app_beep.h"
+#include "app_tracker_cache.h"
 
 /* Forward declaration — declared in smtc_modem.c but not in smtc_modem_api.h */
 extern smtc_modem_return_code_t smtc_modem_set_region_duty_cycle( uint8_t stack_id, bool status );
@@ -115,6 +116,7 @@ uint8_t tracker_scan_temp_len = 0;
 uint8_t tracker_scan_data_temp[64] = { 0 };
 
 bool scan_result = false;
+static bool cache_drain_active = false;
 int8_t scan_result_num = 0;
 
 uint8_t event_state = 0;
@@ -168,6 +170,8 @@ static void on_modem_alarm( void );
  * @param [in] status tx done status @ref smtc_modem_event_txdone_status_t
  */
 static void on_modem_tx_done( smtc_modem_event_txdone_status_t status );
+
+static void cache_consumer_trigger( void );
 
 /*!
  * @brief Downlink data event callback.
@@ -269,7 +273,7 @@ APP_MAIN:
     smtc_modem_init( modem_radio, &apps_modem_event_process );
 
     HAL_DBG_TRACE_MSG( "\n" );
-    HAL_DBG_TRACE_INFO( "###### ===== T1000-E HERMES v1 20260719 ==== ######\n\n" );
+    HAL_DBG_TRACE_INFO( "###### ===== T1000-E HERMES v14-CACHE 20260719 ==== ######\n\n" );
 
     /* LoRa Basics Modem Version */
     apps_modem_common_display_lbm_version( );
@@ -569,6 +573,13 @@ static void on_modem_network_joined( void )
 
 static void on_modem_alarm( void )
 {
+    /* Try to drain cache if entries exist and drain not active */
+    if( tracker_cache_count( ) > 0 && !cache_drain_active )
+    {
+        cache_consumer_trigger( );
+    }
+
+    /* Always run the normal scan — drain retries coexist with scans */
     smtc_modem_status_mask_t modem_status;
     ASSERT_SMTC_MODEM_RC( smtc_modem_get_status( stack_id, &modem_status ));
     modem_status_to_string( modem_status );
@@ -580,14 +591,62 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
     static uint32_t uplink_count = 0;
     HAL_DBG_TRACE_INFO( "Uplink count: %d\n", ++uplink_count );
 
+    /* ---- Cache consumer: timer-based drain ---- */
     if( status == SMTC_MODEM_EVENT_TXDONE_CONFIRMED )
     {
-        if( event_state == TRACKER_STATE_BIT8_USER ) // alarm confirm
+        /* ACK received — pop and schedule next drain */
+        tracker_cache_pop( );
+        cache_drain_active = false;
+
+        if( tracker_cache_count( ) > 0 )
+        {
+            smtc_modem_alarm_start_timer( 3 );  /* drain next in 3s */
+        }
+    }
+    else if( status == SMTC_MODEM_EVENT_TXDONE_SENT )
+    {
+        /* Transmitted but no ACK — DON'T pop, retry at scan interval */
+        cache_drain_active = false;
+        if( tracker_cache_count( ) > 0 )
+        {
+            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+        }
+    }
+    else if( status == SMTC_MODEM_EVENT_TXDONE_NOT_SENT )
+    {
+        /* Blocked — retry at scan interval */
+        cache_drain_active = false;
+        if( tracker_cache_count( ) > 0 )
+        {
+            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+        }
+    }
+
+    if( status == SMTC_MODEM_EVENT_TXDONE_CONFIRMED )
+    {
+        if( event_state == TRACKER_STATE_BIT8_USER )
         {
             app_beep_pos_s( );
         }
     }
     event_state = 0;
+}
+
+/* Trigger cache consumer: start drain if not active */
+static void cache_consumer_trigger( void )
+{
+    if( !cache_drain_active && tracker_cache_count( ) > 0 )
+    {
+        uint8_t entry_len = 0;
+        uint32_t entry_ts = 0;
+        uint8_t *entry = tracker_cache_get( 0, &entry_len, &entry_ts );
+        if( entry && entry_len > 0 )
+        {
+            cache_drain_active = true;
+            /* Use CONFIRMED — only pop on real ACK */
+            app_send_frame( entry, entry_len, true, false );
+        }
+    }
 }
 
 static void on_modem_down_data( int8_t rssi, int8_t snr, smtc_modem_event_downdata_window_t rx_window, uint8_t port,
@@ -756,7 +815,9 @@ static void app_tracker_scan_result_send( void )
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xBE;
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xEF;
 
-        send_ok = app_send_frame( tracker_scan_data_temp, tracker_scan_temp_len, confirm, false );
+        tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
+        send_ok = true;
+        cache_consumer_trigger( );
     }
     else if( tracker_gps_scan_len )
     {
@@ -789,7 +850,9 @@ static void app_tracker_scan_result_send( void )
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xBE;
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xEF;
 
-        send_ok = app_send_frame( tracker_scan_data_temp, tracker_scan_temp_len, confirm, false );
+        tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
+        send_ok = true;
+        cache_consumer_trigger( );
         if( send_ok ) tracker_gps_scan_len = 0;
     }
     else if( tracker_wifi_scan_len )
@@ -826,7 +889,9 @@ static void app_tracker_scan_result_send( void )
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xBE;
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xEF;
 
-        send_ok = app_send_frame( tracker_scan_data_temp, tracker_scan_temp_len, confirm, false );
+        tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
+        send_ok = true;
+        cache_consumer_trigger( );
         if( send_ok ) tracker_wifi_scan_len = 0;
     }
     else if( tracker_ble_scan_len )
@@ -863,7 +928,9 @@ static void app_tracker_scan_result_send( void )
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xBE;
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xEF;
 
-        send_ok = app_send_frame( tracker_scan_data_temp, tracker_scan_temp_len, confirm, false );
+        tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
+        send_ok = true;
+        cache_consumer_trigger( );
         if( send_ok ) tracker_ble_scan_len = 0;
     }
 
