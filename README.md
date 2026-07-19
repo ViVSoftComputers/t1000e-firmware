@@ -259,3 +259,9 @@ print(f'Done: {len(o)} bytes, {t} blocks')
 - **Escape sequences**: The patch tool double-escapes `\n` → `\\n` in C string literals. Verify after patching.
 - **UF2 address offset**: The `TargetAddr` field is at byte offset 12 in the UF2 block header, not 8 (which is `Flags`).
 - **memcpyr reversal**: All multi-byte fields in downlinks use `memcpyr` (big-endian reversal). `0x0005` → bytes `00 05` not `05 00`.
+
+## License
+
+The cache engine (`app_tracker_cache.h/.c`), build script (`build_factory.py`), and all modifications to Seeed's firmware are copyright (C) 2026 ViVSoft Computers LLC and licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+The original Seeed tracker firmware is [MIT licensed](README-Seeed.md). The LoRa Basics Modem is [Clear BSD](lora_basics_modem/LICENSE) licensed by Semtech. The nRF5 SDK and SoftDevice are licensed by Nordic Semiconductor.
