@@ -5,11 +5,11 @@
 #include "app_beep.h"
 #include "app_button.h"
 #include "smtc_modem_api.h"
+#include "main_lorawan_tracker.h"  /* v22: for turbo toggle */
 
 APP_TIMER_DEF(m_button_event_timer_id);
 APP_TIMER_DEF(m_ble_adv_event_timer_id);
-APP_TIMER_DEF(m_sos_cnt_event_timer_id);
-APP_TIMER_DEF(m_test_mode_event_timer_id);
+APP_TIMER_DEF(m_test_mode_event_timer_id);  /* v22: SOS timer removed */
 
 static bool button_event = false;
 static uint32_t button_rise_time = 0;
@@ -20,11 +20,7 @@ static uint8_t button_click_cnt = 0;
 
 static bool ble_adv_flag = false;
 
-static bool sos_status = 0;
-static uint8_t sos_count = 0;
-
-uint8_t button_sos_type = 1;
-bool sos_in_progress = false;
+/* v22: SOS variables removed — double-press now toggles turbo mode */
 
 bool button_power = true;
 bool new_power_off = false;
@@ -101,13 +97,14 @@ void app_user_button_event_timeout_handler( void *p_context )
         // PRINTF( "BUTTON_PRESS_CLICK: %d\r\n", button_click_cnt );
         switch( button_click_cnt )
         {
-            case BUTTON_PRESS_ONECE: // confirm alarm
+            case BUTTON_PRESS_ONECE: // user-triggered scan
             {
                 button_click_cnt = 0;
 
                 if( ble_adv_flag == true )  // skip it when on ble adv mode
                 {
-                    PRINTF( "BLE_ADV, SKIP_IT\r\n" );
+                    PRINTF( "BLE_ADV, SKIP_IT
+\n" );
                     return;
                 }
 
@@ -115,34 +112,28 @@ void app_user_button_event_timeout_handler( void *p_context )
                 smtc_modem_get_status( 0, &modem_status );
                 if(( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
                 {
-                    PRINTF( "LORA_JOINING, SKIP_IT\r\n" );
+                    PRINTF( "LORA_JOINING, SKIP_IT
+\n" );
                     return;
                 }
 
-                if( sos_in_progress ) // stop SOS mode
-                {
-                    sos_in_progress = false;
-                    sos_status = false;
-                    sos_count = 0;
-                    app_timer_stop( m_sos_cnt_event_timer_id );
-                }
-
-                app_beep_idle( );
-                app_led_idle( );
-
+                /* v22: Beep/feedback moved to scan result handler
+                 * (app_tracker_scan_result_send) — 3 beeps for GPS fix,
+                 * 5 beeps for no fix. */
                 app_tracker_new_run( TRACKER_STATE_BIT8_USER );
-                app_led_sos_confirm( );
-                PRINTF( "\r\nCONFIRM_ALARM\r\n\r\n" );
+                PRINTF( "
+\nUSER_SCAN
+\n
+\n" );
             }
             break;
 
-            case BUTTON_PRESS_TWICE: // SOS alarm
+            case BUTTON_PRESS_TWICE: // v22: turbo scan toggle (was SOS)
             {
                 button_click_cnt = 0;
 
-                if( ble_adv_flag == true )  // skip it when on ble adv mode
+                if( ble_adv_flag == true )
                 {
-                    PRINTF( "BLE_ADV, SKIP_IT\r\n" );
                     return;
                 }
 
@@ -150,40 +141,27 @@ void app_user_button_event_timeout_handler( void *p_context )
                 smtc_modem_get_status( 0, &modem_status );
                 if(( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
                 {
-                    PRINTF( "LORA_JOINING, SKIP_IT\r\n" );
                     return;
                 }
 
-                if( button_sos_type == 0 ) // single
+                app_tracker_turbo_toggle( );
+                if ( app_tracker_is_turbo( ) )
                 {
-                    app_tracker_new_run( TRACKER_STATE_BIT7_SOS );
-                    app_beep_sos( );
-                    app_led_sos_run( );
-                    PRINTF( "\r\nSOS_SINGLE\r\n\r\n" );
+                    /* Just entered turbo — confirm with short beep */
+                    hal_pwm_init( 2000 );
+                    hal_beep_on( );
+                    hal_mcu_wait_ms( 80 );
+                    hal_beep_off( );
+                    hal_pwm_deinit( );
                 }
-                else if( button_sos_type == 1 ) // continuous
+                else
                 {
-                    if( sos_status == false )
-                    {
-                        sos_status = true;
-                        sos_in_progress = true;
-                        app_timer_stop( m_sos_cnt_event_timer_id );
-                        app_timer_start( m_sos_cnt_event_timer_id,  APP_TIMER_TICKS( 60000 ), NULL );
-                        app_tracker_new_run( TRACKER_STATE_BIT7_SOS );
-                        app_beep_sos( );
-                        app_led_sos_run( );
-                        PRINTF( "\r\nSOS_ENTER\r\n\r\n" );
-                    }
-                    else
-                    {
-                        sos_in_progress = false;
-                        sos_status = false;
-                        sos_count = 0;
-                        app_beep_idle( );
-                        app_led_idle( );
-                        app_timer_stop( m_sos_cnt_event_timer_id );
-                        PRINTF( "\r\nSOS_EXIT\r\n\r\n" );
-                    }
+                    /* Exited turbo — confirm with short beep */
+                    hal_pwm_init( 2000 );
+                    hal_beep_on( );
+                    hal_mcu_wait_ms( 80 );
+                    hal_beep_off( );
+                    hal_pwm_deinit( );
                 }
             }
             break;
@@ -194,7 +172,7 @@ void app_user_button_event_timeout_handler( void *p_context )
                 if( ble_adv_flag == false )
                 {
                     ble_adv_flag = true;
-                    
+                        
                     smtc_modem_status_mask_t modem_status;
                     smtc_modem_get_status( 0, &modem_status );
                     if(( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
@@ -202,13 +180,7 @@ void app_user_button_event_timeout_handler( void *p_context )
                         app_led_breathe_stop( );
                     }
 
-                    if( sos_in_progress ) // stop SOS mode
-                    {
-                        sos_in_progress = false;
-                        sos_status = false;
-                        sos_count = 0;
-                        app_timer_stop( m_sos_cnt_event_timer_id );
-                    }
+                    /* v22: SOS stop removed — turbo mode not stopped by BLE */
 
                     app_beep_idle( );
                     app_led_idle( );
@@ -265,30 +237,6 @@ void app_user_ble_adv_event_timeout_handler( void *p_context )
     }
 }
 
-void app_user_sos_cnt_event_timeout_handler( void *p_context )
-{
-    (void)p_context;
-    if( sos_status )
-    {
-        sos_count ++;
-        if( sos_count >= APP_USER_SOS_NUM_MAX )
-        {
-            sos_in_progress = false;
-            sos_status = false;
-            sos_count = 0;
-            app_timer_stop( m_sos_cnt_event_timer_id );
-            app_beep_idle( );
-            app_led_idle( );
-            PRINTF( "\r\nSOS_EXIT\r\n\r\n" );
-        }
-        else
-        {
-            app_timer_start( m_sos_cnt_event_timer_id,  APP_TIMER_TICKS( 60000 ), NULL );
-            app_tracker_new_run( TRACKER_STATE_BIT7_SOS );
-        }
-    }
-}
-
 void app_user_test_mode_event_timeout_handler( void *p_context )
 {
     (void)p_context;
@@ -307,7 +255,7 @@ void app_user_button_init( void )
     hal_gpio_init_in( USER_BUTTON, HAL_GPIO_PULL_MODE_DOWN, HAL_GPIO_IRQ_MODE_RISING_FALLING, &app_button_irq );
     app_timer_create( &m_button_event_timer_id, APP_TIMER_MODE_SINGLE_SHOT, app_user_button_event_timeout_handler );
     app_timer_create( &m_ble_adv_event_timer_id, APP_TIMER_MODE_SINGLE_SHOT, app_user_ble_adv_event_timeout_handler );
-    app_timer_create( &m_sos_cnt_event_timer_id, APP_TIMER_MODE_SINGLE_SHOT, app_user_sos_cnt_event_timeout_handler );
+    /* v22: SOS timer removed — double-press now toggles turbo */
     app_timer_create( &m_test_mode_event_timer_id, APP_TIMER_MODE_REPEATED, app_user_test_mode_event_timeout_handler );
     if( tracker_test_mode )
     {
@@ -351,30 +299,6 @@ void app_user_button_det( void )
     }
 }
 
-void app_sos_continuous_toggle_on( void )
-{
-    sos_status = true;
-    sos_in_progress = true;
-    sos_count = 0;
-    app_timer_stop( m_sos_cnt_event_timer_id );
-    app_timer_start( m_sos_cnt_event_timer_id,  APP_TIMER_TICKS( 60000 ), NULL );
-    app_tracker_new_run( TRACKER_STATE_BIT7_SOS );
-    app_beep_sos( );
-    app_led_sos_run( );
-    PRINTF( "\r\nSOS_ENTER\r\n\r\n" );
-}
-
-void app_sos_continuous_toggle_off( void )
-{
-    sos_in_progress = false;
-    sos_status = false;
-    sos_count = 0;
-    app_beep_idle( );
-    app_led_idle( );
-    app_timer_stop( m_sos_cnt_event_timer_id );
-    PRINTF( "\r\nSOS_EXIT\r\n\r\n" );
-}
-
 void app_toggle_power_off(void)
 {
     if( button_power ) 
@@ -393,7 +317,6 @@ void app_user_power_off( void )
     app_radio_set_sleep( );
 
     app_timer_stop( m_ble_adv_event_timer_id );
-    app_timer_stop( m_sos_cnt_event_timer_id );
     app_timer_stop( m_test_mode_event_timer_id );
 
     app_led_breathe_stop( );

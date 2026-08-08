@@ -100,6 +100,18 @@ void app_radio_set_sleep( void );
 
 void app_lora_stack_suspend( void );
 
+/** @brief Set the periodic scan interval in minutes */
+void app_tracker_set_interval( uint32_t minutes );
+
+/** @brief Get the current periodic scan interval in minutes */
+uint32_t app_tracker_get_interval( void );
+
+/** @brief Toggle turbo scan mode (30-second interval) on/off */
+void app_tracker_turbo_toggle( void );
+
+/** @brief Check if turbo mode is active */
+bool app_tracker_is_turbo( void );
+
 #ifdef __cplusplus
 }
 #endif

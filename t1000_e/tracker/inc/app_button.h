@@ -16,13 +16,7 @@ extern "C" {
 #define BUTTON_PRESS_TWICE      2
 #define BUTTON_PRESS_THRICE     3
 
-#define APP_USER_SOS_NUM_MAX    30
-
-#define TRACKER_STATE_BIT7_SOS      0x40
-#define TRACKER_STATE_BIT8_USER     0x80
-
-extern uint8_t button_sos_type;
-extern bool sos_in_progress;
+/* ── v22: SOS removed — double-press now toggles turbo scan mode ── */
 
 /*!
  * @brief Init button module
@@ -30,19 +24,9 @@ extern bool sos_in_progress;
 void app_user_button_init( void );
 
 /*!
- * @brief Button detcet handler
+ * @brief Button detect handler
  */
 void app_user_button_det( void );
-
-/*!
- * @brief Toggle on sod continuous
- */
-void app_sos_continuous_toggle_on( void );
-
-/*!
- * @brief Toggle off sod continuous
- */
-void app_sos_continuous_toggle_off( void );
 
 /*!
  * @brief Power off device

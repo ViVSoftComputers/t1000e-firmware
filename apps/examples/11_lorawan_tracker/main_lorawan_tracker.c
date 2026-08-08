@@ -87,6 +87,10 @@ uint32_t wifi_scan_duration = 3;            // in second
 uint32_t ble_scan_duration = 3;             // in second
 uint32_t tracker_periodic_interval = 60;    // in minute
 
+/* Turbo mode — double-press toggles 30-second scan interval */
+static bool     turbo_active = false;
+static uint32_t saved_periodic_interval = 60;
+
 uint8_t wifi_scan_max = 3;
 uint8_t ble_scan_max = 3;
 
@@ -943,6 +947,49 @@ static void app_tracker_scan_result_send( void )
     else
     {
         tracker_scan_status = 0;
+
+        /* v22: Beep feedback after user-triggered or turbo scans.
+         * Uses direct PWM control for simple multi-beep patterns.
+         * Safe to block here — scan is done, next alarm not yet set. */
+        if ( event_state == TRACKER_STATE_BIT8_USER )
+        {
+            if ( tracker_gps_scan_len > 0 )
+            {
+                /* GPS fix — 3 short beeps */
+                hal_pwm_init( 2000 );
+                for ( uint8_t i = 0; i < 3; i++ )
+                {
+                    hal_beep_on( );
+                    hal_mcu_wait_ms( 80 );
+                    hal_beep_off( );
+                    if ( i < 2 ) hal_mcu_wait_ms( 120 );
+                }
+                hal_pwm_deinit( );
+            }
+            else
+            {
+                /* No GPS fix — 5 short beeps */
+                hal_pwm_init( 2000 );
+                for ( uint8_t i = 0; i < 5; i++ )
+                {
+                    hal_beep_on( );
+                    hal_mcu_wait_ms( 80 );
+                    hal_beep_off( );
+                    if ( i < 4 ) hal_mcu_wait_ms( 120 );
+                }
+                hal_pwm_deinit( );
+            }
+        }
+        else if ( turbo_active )
+        {
+            /* Turbo scan complete — 1 short beep */
+            hal_pwm_init( 2000 );
+            hal_beep_on( );
+            hal_mcu_wait_ms( 80 );
+            hal_beep_off( );
+            hal_pwm_deinit( );
+        }
+
         int32_t next_delay = tracker_periodic_interval - ( hal_rtc_get_time_s( ) - tracker_scan_begin );
         smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
         HAL_DBG_TRACE_PRINTF( "send end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
@@ -1306,4 +1353,45 @@ void app_lora_stack_suspend( void )
     smtc_modem_leave_network( stack_id );
     smtc_modem_suspend_radio_communications( true );
 }
+
+/* ── v22: Scan interval & turbo mode helpers ─────────────────────── */
+
+void app_tracker_set_interval( uint32_t minutes )
+{
+    if ( minutes > 0 )
+    {
+        tracker_periodic_interval = minutes;
+    }
+}
+
+uint32_t app_tracker_get_interval( void )
+{
+    return tracker_periodic_interval;
+}
+
+void app_tracker_turbo_toggle( void )
+{
+    if ( turbo_active )
+    {
+        /* Exit turbo — restore saved interval */
+        tracker_periodic_interval = saved_periodic_interval;
+        turbo_active = false;
+    }
+    else
+    {
+        /* Enter turbo — save current interval, switch to ~30 second cycle.
+         * tracker_periodic_interval is in seconds despite the "in minute" comment.
+         * With a 30s GNSS scan, interval=30 gives next_delay close to 0,
+         * so the next scan fires ~1s after completion → ~30s total cycle. */
+        saved_periodic_interval = tracker_periodic_interval;
+        tracker_periodic_interval = 30;
+        turbo_active = true;
+    }
+}
+
+bool app_tracker_is_turbo( void )
+{
+    return turbo_active;
+}
+
 /* --- EOF ------------------------------------------------------------------ */
