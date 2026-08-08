@@ -22,7 +22,7 @@
 /* Firmware version - embedded in every uplink */
 #define FIRMWARE_VERSION           23  /* v23: motion gate */
 
-#define TRACKER_CACHE_MAX_DEPTH   500   /* ~83h of 10-min intervals */
+#define TRACKER_CACHE_MAX_DEPTH   1000   /* ~166h of 10-min intervals */
 #define TRACKER_CACHE_MAX_SIZE    128   /* max LoRaWAN payload size */
 
 /**
