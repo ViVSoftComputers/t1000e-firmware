@@ -30,7 +30,7 @@ extern bool adr_user_enable;
 extern uint8_t adr_user_dr_min;
 extern uint8_t adr_user_dr_max;
 
-extern uint8_t button_sos_type;
+/* v22: button_sos_type removed */
 
 extern uint8_t ble_uuid_filter_array[16];
 extern uint8_t ble_uuid_filter_num;
@@ -54,7 +54,7 @@ void app_lora_packet_power_on_uplink( void )
     uint32_t temp = tracker_periodic_interval / 60;
     memcpyr( app_lora_packet_buffer + 7, ( uint8_t *)( &temp ), 2 );
     app_lora_packet_buffer[9] = tracker_acc_en;
-    app_lora_packet_buffer[10] = button_sos_type;
+    app_lora_packet_buffer[10] = 0;  /* v22: SOS removed */
     app_lora_packet_buffer[11] = wifi_scan_max;
     app_lora_packet_buffer[12] = ble_scan_max;
 
@@ -106,31 +106,12 @@ void app_lora_packet_downlink_decode( uint8_t *buf, uint8_t len )
 
             case DATA_ID_DW_PACKET_SOS_CONTINUOUS:
             {
-                if( buf[1] == 0 )
-                {
-                    PRINTF( "lora sos off\r\n" );
-                    app_sos_continuous_toggle_off( );
-                }
-                else if( buf[1] == 1 )
-                {
-                    PRINTF( "lora sos on\r\n" );
-                    app_sos_continuous_toggle_on( );
-                }
+                /* v22: SOS removed - downlink SOS toggle is a no-op */
+                PRINTF( "lora sos (disabled in v22)
+" );
             }
             break;
 
-            case DATA_ID_DW_PACKET_INTEVAL_PARAM:
-            {
-                memcpyr(( uint8_t * )( &tmep_32 ), buf + 3, 2 );
-                if(( tmep_32 >= 1 ) && ( tmep_32 <= ( 24 * 60 * 7 )))
-                {
-                    general_param_update = true;
-                    tracker_periodic_interval = tmep_32 * 60;
-                    app_param.hardware_info.pos_interval = tmep_32;
-                    PRINTF( "tracker_periodic_interval= %u\r\n", tracker_periodic_interval );
-                }                
-            }
-            break;
 
             case DATA_ID_DW_PACKET_BUZER:
             {
@@ -192,7 +173,7 @@ void app_lora_packet_params_load( void )
     adr_user_dr_min = app_param.lora_info.lr_DR_min;
     adr_user_dr_max = app_param.lora_info.lr_DR_max;
 
-    button_sos_type = app_param.hardware_info.sos_mode;
+    /* v22: button_sos_type removed */
 
     memcpy( ble_uuid_filter_array, app_param.hardware_info.beac_uuid, sizeof( ble_uuid_filter_array ));
     ble_uuid_filter_num = app_param.hardware_info.uuid_num;
