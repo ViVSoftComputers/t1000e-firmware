@@ -768,6 +768,10 @@ static void app_tracker_scan_result_send( void )
     int16_t ax = 0, ay = 0, az = 0;
     bool gps_had_fix = ( tracker_gps_scan_len > 0 );  /* v22: capture before reset */
 
+    /* v23: motion gate — skip cache save if within 25m of last known position */
+    static int32_t last_lat = 0, last_lon = 0;
+    bool moved = true;  /* default: allow save (first run, no GPS, or moved) */
+
     if(( packet_policy == RETRY_STATE_1C ) || ( event_state == TRACKER_STATE_BIT8_USER ))
     {
         confirm = true;
@@ -852,12 +856,45 @@ static void app_tracker_scan_result_send( void )
         memcpy( tracker_scan_data_temp + tracker_scan_temp_len, tracker_gps_scan_data, tracker_gps_scan_len );
         tracker_scan_temp_len += tracker_gps_scan_len;
 
+        /* v23: motion gate — extract current position, check distance */
+        {
+            int32_t cur_lat, cur_lon;
+            memcpyr( ( uint8_t *)( &cur_lon ), tracker_gps_scan_data, 4 );
+            memcpyr( ( uint8_t *)( &cur_lat ), tracker_gps_scan_data + 4, 4 );
+
+            if ( last_lat == 0 && last_lon == 0 )
+            {
+                /* First fix — always save, set baseline */
+                last_lat = cur_lat;
+                last_lon = cur_lon;
+                moved = true;
+            }
+            else
+            {
+                int32_t dlat = cur_lat - last_lat;
+                int32_t dlon = cur_lon - last_lon;
+                if ( dlat < 0 ) dlat = -dlat;
+                if ( dlon < 0 ) dlon = -dlon;
+                /* ~25m box at 27.8°N: 1 unit lat≈0.11m, 1 unit lon≈0.098m */
+                moved = ( dlat > 225 || dlon > 255 );
+                if ( moved )
+                {
+                    last_lat = cur_lat;
+                    last_lon = cur_lon;
+                }
+            }
+        }
+
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xBE;
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xEF;
 
-        tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
-        send_ok = true;
-        cache_consumer_trigger( );
+        /* v23: motion gate — only cache + send if moved ≥25m, or user triggered */
+        if ( moved || event_state == TRACKER_STATE_BIT8_USER )
+        {
+            tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
+            send_ok = true;
+            cache_consumer_trigger( );
+        }
         if( send_ok ) tracker_gps_scan_len = 0;
     }
     else if( tracker_wifi_scan_len )
