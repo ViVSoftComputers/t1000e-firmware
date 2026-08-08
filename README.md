@@ -1,8 +1,10 @@
-# T1000-E Tracker Firmware — v21 Cache Edition
+# T1000-E Tracker Firmware — v22 Turbo Edition
 
-Built: 2026-07-19
+Built: 2026-08-08
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html?srsltid=AfmBOoqFlj0sVbadGcyUSr_rvJ528UYaUHDS0Be087KTa7Tn1kPZtYKe&sensecap_affiliate=agiE1S0&referring_service=link) (nRF52840 + LR1110)
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
+
+> **v22 changes from v21:** Button-controlled turbo scan mode, GPS-dependent beep feedback, SOS removed. All cache/producer-consumer architecture unchanged.
 
 ## 📖 Read the Full Article
 
@@ -20,6 +22,27 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 5. Store it somewhere safe — this is your only path back to factory firmware
 
 You can restore factory firmware at any time by dragging the backup UF2 back onto the device in bootloader mode.
+
+## v22 Button Behavior
+
+The button controls are **completely redesigned** in v22. SOS mode is removed. All data still flows through the cache engine with confirmed uplinks.
+
+| Press | Action | Beep Feedback |
+|-------|--------|---------------|
+| **Single-press** | Trigger immediate scan | After scan: 3 short beeps = GPS fix obtained, 2 long beeps = no GPS fix |
+| **Double-press** | Toggle **turbo mode** | 500ms long beep on enter, 500ms long beep on exit |
+| **Triple-press** | BLE advertising (unchanged) | — |
+| **Long-press** (3s) | Power off (unchanged) | Power-off melody |
+
+### Turbo Mode
+- Scans every **~1 minute** (instead of your configured interval)
+- Beeps **once** after each scan completes
+- Data is still cached and sent via confirmed uplinks — same as normal mode
+- **Saves and restores** your previous scan interval — if you changed it via downlink, turbo remembers the exact value
+- Double-press again to exit turbo and restore the previous interval
+
+### No SOS
+All SOS functionality (SOS downlink commands, SOS LED pattern, SOS beep) has been removed. The `DATA_ID_DW_PACKET_SOS_CONTINUOUS` downlink is accepted as a no-op — it won't break anything but does nothing.
 
 ## Architecture
 
@@ -161,7 +184,7 @@ Power-on uplink (FPort 5) ends in `XX c0 de` where XX is the firmware version:
 |---------|------------------------|
 | v20 | `...14 c0 de` |
 | v21 | `...15 c0 de` |
-| v22 (future) | `...16 c0 de` |
+| v22 | `...16 c0 de` |
 
 All sensor uplinks end in `be ef`.
 
