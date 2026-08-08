@@ -1379,12 +1379,9 @@ void app_tracker_turbo_toggle( void )
     }
     else
     {
-        /* Enter turbo — save current interval, switch to ~30 second cycle.
-         * tracker_periodic_interval is in seconds despite the "in minute" comment.
-         * With a 30s GNSS scan, interval=30 gives next_delay close to 0,
-         * so the next scan fires ~1s after completion → ~30s total cycle. */
+        /* Enter turbo — save current interval, switch to ~1 minute cycle. */
         saved_periodic_interval = tracker_periodic_interval;
-        tracker_periodic_interval = 30;
+        tracker_periodic_interval = 60;
         turbo_active = true;
     }
 }

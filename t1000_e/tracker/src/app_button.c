@@ -147,10 +147,10 @@ void app_user_button_event_timeout_handler( void *p_context )
                 app_tracker_turbo_toggle( );
                 if ( app_tracker_is_turbo( ) )
                 {
-                    /* Just entered turbo — confirm with short beep */
+                    /* Entered turbo — confirm with short beep */
                     hal_pwm_init( 2000 );
                     hal_beep_on( );
-                    hal_mcu_wait_ms( 80 );
+                    hal_mcu_wait_ms( 500 );
                     hal_beep_off( );
                     hal_pwm_deinit( );
                 }
@@ -159,7 +159,7 @@ void app_user_button_event_timeout_handler( void *p_context )
                     /* Exited turbo — confirm with short beep */
                     hal_pwm_init( 2000 );
                     hal_beep_on( );
-                    hal_mcu_wait_ms( 80 );
+                    hal_mcu_wait_ms( 500 );
                     hal_beep_off( );
                     hal_pwm_deinit( );
                 }
