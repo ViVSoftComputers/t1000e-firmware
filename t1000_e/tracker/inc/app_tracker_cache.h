@@ -10,7 +10,7 @@
  *   - length (1-128 bytes)
  *   - payload data
  *
- * Entries older than TRACKER_CACHE_TTL_SECONDS are dropped on replay.
+ * All entries are replayed in FIFO order — no TTL expiry.
  */
 
 #ifndef APP_TRACKER_CACHE_H
@@ -22,9 +22,8 @@
 /* Firmware version - embedded in every uplink */
 #define FIRMWARE_VERSION           23  /* v23: motion gate */
 
-#define TRACKER_CACHE_MAX_DEPTH   200    /* ~33h of 10-min intervals */
+#define TRACKER_CACHE_MAX_DEPTH   500   /* ~83h of 10-min intervals */
 #define TRACKER_CACHE_MAX_SIZE    128   /* max LoRaWAN payload size */
-#define TRACKER_CACHE_TTL_SECONDS (4 * 3600)  /* 4h: discard entries older than this */
 
 /**
  * @brief Save a packet to the ring-buffer cache.
@@ -34,9 +33,9 @@
 void tracker_cache_save( const uint8_t *data, uint8_t len );
 
 /**
- * @brief Return the number of cached (non-expired) entries.
+ * @brief Return the number of cached entries.
  */
-uint8_t tracker_cache_count( void );
+uint16_t tracker_cache_count( void );
 
 /**
  * @brief Get the oldest cached entry by index.
@@ -46,7 +45,7 @@ uint8_t tracker_cache_count( void );
  * @param[out] ts    Set to entry RTC timestamp (seconds)
  * @return Pointer to the cached data, or NULL if idx is out of range.
  */
-uint8_t *tracker_cache_get( uint8_t idx, uint8_t *len, uint32_t *ts );
+uint8_t *tracker_cache_get( uint16_t idx, uint8_t *len, uint32_t *ts );
 
 /**
  * @brief Remove the oldest cached entry (FIFO pop).

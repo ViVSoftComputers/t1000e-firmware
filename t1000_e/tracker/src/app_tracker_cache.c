@@ -1,9 +1,7 @@
 /*
- * Copyright (C) 2026 ViVSoft Computers LLC
+ * Copyright (C) 2024-2026 ViVoSofT
  *
  * Ring-buffer cache for T1000-E LoRaWAN tracker.
- * Stores scan result packets when device is out of LoRaWAN range
- * and replays them when connectivity returns.
  */
 
 #include "app_tracker_cache.h"
@@ -24,9 +22,9 @@ typedef struct
 } cache_entry_t;
 
 static cache_entry_t cache_ring[TRACKER_CACHE_MAX_DEPTH];
-static uint8_t       cache_head = 0;   /* next write position */
-static uint8_t       cache_tail = 0;   /* oldest unread position */
-static uint8_t       cache_count = 0;  /* number of valid entries */
+static uint16_t      cache_head = 0;   /* next write position */
+static uint16_t      cache_tail = 0;   /* oldest unread position */
+static uint16_t      cache_count = 0;  /* number of valid entries */
 
 /* -------------------------------------------------------------------------- */
 /* --- PUBLIC FUNCTIONS                                                   --- */
@@ -60,12 +58,12 @@ KEEP void tracker_cache_save( const uint8_t *data, uint8_t len )
     cache_head = ( cache_head + 1 ) % TRACKER_CACHE_MAX_DEPTH;
 }
 
-KEEP uint8_t tracker_cache_count( void )
+KEEP uint16_t tracker_cache_count( void )
 {
     return cache_count;
 }
 
-KEEP uint8_t *tracker_cache_get( uint8_t idx, uint8_t *len, uint32_t *ts )
+KEEP uint8_t *tracker_cache_get( uint16_t idx, uint8_t *len, uint32_t *ts )
 {
     if( idx >= cache_count || len == NULL || ts == NULL )
     {
@@ -73,7 +71,7 @@ KEEP uint8_t *tracker_cache_get( uint8_t idx, uint8_t *len, uint32_t *ts )
     }
 
     /* Compute the ring index for the requested position (0 = oldest) */
-    uint8_t pos = ( cache_tail + idx ) % TRACKER_CACHE_MAX_DEPTH;
+    uint16_t pos = ( cache_tail + idx ) % TRACKER_CACHE_MAX_DEPTH;
     *len = cache_ring[pos].len;
     *ts  = cache_ring[pos].timestamp;
     return cache_ring[pos].data;
