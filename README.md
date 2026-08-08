@@ -1,10 +1,10 @@
-# T1000-E Tracker Firmware — v22 Turbo Edition
+# T1000-E Tracker Firmware — v23 Motion Gate Edition
 
 Built: 2026-08-08
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html?srsltid=AfmBOoqFlj0sVbadGcyUSr_rvJ528UYaUHDS0Be087KTa7Tn1kPZtYKe&sensecap_affiliate=agiE1S0&referring_service=link) (nRF52840 + LR1110)
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v22 changes from v21:** Button-controlled turbo scan mode, GPS-dependent beep feedback, SOS removed. All cache/producer-consumer architecture unchanged.
+> **v23 changes from v22:** Motion gate — skips cache save + LoRa TX when stationary (within 25m of last GPS fix). User-triggered scans and non-GPS scans always save. Turbo mode unchanged.
 
 ## 📖 Read the Full Article
 
@@ -43,6 +43,17 @@ The button controls are **completely redesigned** in v22. SOS mode is removed. A
 
 ### No SOS
 All SOS functionality (SOS downlink commands, SOS LED pattern, SOS beep) has been removed. The `DATA_ID_DW_PACKET_SOS_CONTINUOUS` downlink is accepted as a no-op — it won't break anything but does nothing.
+
+### Motion Gate (v23)
+
+When the device has a GPS fix, it compares the current position to the last saved position. If the device hasn't moved more than **25 meters**, the scan result is **not saved to cache and no LoRa TX is sent**. This saves battery and airtime when the device is stationary.
+
+**Always saved regardless of movement:**
+- User-triggered scans (single-press button)
+- First GPS fix after power-on
+- WiFi-only and BLE-only scans (no GPS data to compare)
+
+The GPS scan itself still runs — beep feedback continues to indicate fix/no-fix. Only the data path is gated.
 
 ## Architecture
 
@@ -185,6 +196,7 @@ Power-on uplink (FPort 5) ends in `XX c0 de` where XX is the firmware version:
 | v20 | `...14 c0 de` |
 | v21 | `...15 c0 de` |
 | v22 | `...16 c0 de` |
+| v23 | `...17 c0 de` |
 
 All sensor uplinks end in `be ef`.
 
