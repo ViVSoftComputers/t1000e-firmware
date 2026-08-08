@@ -114,9 +114,12 @@ The firmware uses a strict producer/consumer design with a single rule: **only t
 
 | Property | Value |
 |----------|-------|
-| Capacity | 200 entries |
-| Entry size | Up to 128 bytes (max LoRaWAN payload) |
-| TTL | 4 hours (older entries skipped on replay) |
+| Capacity | 1,000 entries |
+| Entry size | 136 bytes (128 data + 8 metadata) |
+| RAM used | ~136 KB |
+| TTL | None — all entries replayed |
+| Storage at 10-min scan | ~166 hours (~7 days) |
+| Storage at 1-min turbo | ~16 hours |
 | Overflow | FIFO — oldest overwritten when full |
 | Drain speed | 3 seconds between entries (fast flush when back in range) |
 | Retry interval | Matches scan interval (no extra battery drain vs factory) |
