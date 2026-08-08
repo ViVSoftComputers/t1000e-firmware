@@ -968,14 +968,14 @@ static void app_tracker_scan_result_send( void )
             }
             else
             {
-                /* No GPS fix — 5 short beeps */
+                /* No GPS fix — 2 long beeps */
                 hal_pwm_init( 2000 );
-                for ( uint8_t i = 0; i < 5; i++ )
+                for ( uint8_t i = 0; i < 2; i++ )
                 {
                     hal_beep_on( );
-                    hal_mcu_wait_ms( 80 );
+                    hal_mcu_wait_ms( 500 );
                     hal_beep_off( );
-                    if ( i < 4 ) hal_mcu_wait_ms( 120 );
+                    if ( i < 1 ) hal_mcu_wait_ms( 200 );
                 }
                 hal_pwm_deinit( );
             }
