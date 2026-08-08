@@ -1384,6 +1384,8 @@ void app_tracker_turbo_toggle( void )
         saved_periodic_interval = tracker_periodic_interval;
         tracker_periodic_interval = 60;
         turbo_active = true;
+        /* Kick off first turbo scan immediately (2s delay for beep to finish) */
+        smtc_modem_alarm_start_timer( 2 );
     }
 }
 
