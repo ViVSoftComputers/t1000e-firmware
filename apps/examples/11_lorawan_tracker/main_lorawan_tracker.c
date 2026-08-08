@@ -766,6 +766,7 @@ static void app_tracker_scan_result_send( void )
     uint16_t light = 0;
     int8_t battery = 0;
     int16_t ax = 0, ay = 0, az = 0;
+    bool gps_had_fix = ( tracker_gps_scan_len > 0 );  /* v22: capture before reset */
 
     if(( packet_policy == RETRY_STATE_1C ) || ( event_state == TRACKER_STATE_BIT8_USER ))
     {
@@ -953,7 +954,7 @@ static void app_tracker_scan_result_send( void )
          * Safe to block here — scan is done, next alarm not yet set. */
         if ( event_state == TRACKER_STATE_BIT8_USER )
         {
-            if ( tracker_gps_scan_len > 0 )
+            if ( gps_had_fix )
             {
                 /* GPS fix — 3 short beeps */
                 hal_pwm_init( 2000 );
