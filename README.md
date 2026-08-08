@@ -55,6 +55,8 @@ When the device has a GPS fix, it compares the current position to the last save
 
 The GPS scan itself still runs — beep feedback continues to indicate fix/no-fix. Only the data path is gated.
 
+> **Note:** No GPS = can't determine movement = always save. If you're indoors or in GPS-denied conditions, every scan will be cached regardless of whether the device actually moved.
+
 ## Architecture
 
 ```mermaid
