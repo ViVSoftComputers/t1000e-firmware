@@ -16,6 +16,8 @@ extern "C" {
 #define BUTTON_PRESS_TWICE      2
 #define BUTTON_PRESS_THRICE     3
 
+#define TRACKER_STATE_BIT8_USER     0x80
+
 /* ── v22: SOS removed — double-press now toggles turbo scan mode ── */
 
 /*!

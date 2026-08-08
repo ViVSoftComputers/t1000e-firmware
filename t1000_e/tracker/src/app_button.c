@@ -5,7 +5,12 @@
 #include "app_beep.h"
 #include "app_button.h"
 #include "smtc_modem_api.h"
-#include "main_lorawan_tracker.h"  /* v22: for turbo toggle */
+
+/* v22: Turbo toggle — declared in main_lorawan_tracker.c.
+ * Can't include main_lorawan_tracker.h from here (include path issue),
+ * so use extern declarations. */
+extern void app_tracker_turbo_toggle( void );
+extern bool app_tracker_is_turbo( void );
 
 APP_TIMER_DEF(m_button_event_timer_id);
 APP_TIMER_DEF(m_ble_adv_event_timer_id);
@@ -103,8 +108,7 @@ void app_user_button_event_timeout_handler( void *p_context )
 
                 if( ble_adv_flag == true )  // skip it when on ble adv mode
                 {
-                    PRINTF( "BLE_ADV, SKIP_IT
-\n" );
+                    PRINTF( "BLE_ADV, SKIP_IT\r\n" );
                     return;
                 }
 
@@ -112,8 +116,7 @@ void app_user_button_event_timeout_handler( void *p_context )
                 smtc_modem_get_status( 0, &modem_status );
                 if(( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
                 {
-                    PRINTF( "LORA_JOINING, SKIP_IT
-\n" );
+                    PRINTF( "LORA_JOINING, SKIP_IT\r\n" );
                     return;
                 }
 
@@ -121,10 +124,7 @@ void app_user_button_event_timeout_handler( void *p_context )
                  * (app_tracker_scan_result_send) — 3 beeps for GPS fix,
                  * 5 beeps for no fix. */
                 app_tracker_new_run( TRACKER_STATE_BIT8_USER );
-                PRINTF( "
-\nUSER_SCAN
-\n
-\n" );
+                PRINTF( "\r\nUSER_SCAN\r\n\r\n" );
             }
             break;
 

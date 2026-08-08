@@ -163,7 +163,8 @@ void app_user_led_event_timeout_handler( void *p_context )
 
         case APP_LED_SOS:
         {
-            if( button_sos_type == 0 ) // SOS single
+            /* v22: SOS removed — button_sos_type no longer exists.
+             * LED SOS pattern now always loops until stopped externally. */
             {
                 if(( hal_rtc_get_time_ms( ) - led_start ) > 3000 )
                 {
