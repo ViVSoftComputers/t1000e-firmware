@@ -901,8 +901,8 @@ static void app_tracker_scan_result_send( void )
             /* Heartbeat resets position baseline so next scan doesn't fire twice */
             if ( heartbeat && !moved )
             {
-                last_lat = cur_lat;
-                last_lon = cur_lon;
+                memcpyr( ( uint8_t *)( &last_lon ), tracker_gps_scan_data, 4 );
+                memcpyr( ( uint8_t *)( &last_lat ), tracker_gps_scan_data + 4, 4 );
             }
         }
         if( send_ok ) tracker_gps_scan_len = 0;
