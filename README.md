@@ -57,6 +57,10 @@ The GPS scan itself still runs — beep feedback continues to indicate fix/no-fi
 
 > **Note:** No GPS = can't determine movement = always save. If you're indoors or in GPS-denied conditions, every scan will be cached regardless of whether the device actually moved.
 
+### Heartbeat (v23)
+
+To prevent the device from going completely silent when stationary, a **1-hour heartbeat** ensures at least one position is transmitted every hour — even if you haven't moved. This keeps the map alive and proves the device is still working.
+
 ## Architecture
 
 ```mermaid
