@@ -606,6 +606,10 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         {
             smtc_modem_alarm_start_timer( 3 );  /* drain next in 3s */
         }
+        else
+        {
+            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+        }
     }
     else if( status == SMTC_MODEM_EVENT_TXDONE_SENT )
     {
