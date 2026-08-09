@@ -40,6 +40,13 @@ bool gnss_get_fix_status( void );
 void gnss_get_position( int32_t *lat, int32_t *lon );
 
 /*!
+ * @brief Get GPS UTC time as Unix epoch seconds
+ * 
+ * @return Epoch seconds, or 0 if no valid time fix
+ */
+uint32_t gnss_get_epoch( void );
+
+/*!
  * @brief Parse gnss nmea data
  * 
  * @param [in] nmea Pointer to buffer to be parsed

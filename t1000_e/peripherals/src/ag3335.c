@@ -348,6 +348,35 @@ void gnss_get_position( int32_t *lat, int32_t *lon )
     *lon = longitude_i32;
 }
 
+uint32_t gnss_get_epoch( void )
+{
+    int y = frame_zda.date.year;
+    int m = frame_zda.date.month;
+    int d = frame_zda.date.day;
+    
+    if( y < 2020 || m < 1 || m > 12 || d < 1 ) return 0;
+    
+    y -= 1970;
+    uint32_t days = y * 365;
+    /* Add leap days between 1970 and (1970+y) */
+    int leap_year;
+    for( int i = 1970; i < 1970 + ( int )y + 1; i++ )
+    {
+        if(( i % 4 == 0 && i % 100 != 0 ) || i % 400 == 0 ) days++;
+    }
+    /* Subtract days after current year-end (leap day already counted if applicable) */
+    static const int dom[] = {0,31,59,90,120,151,181,212,243,273,304,334};
+    int doy = dom[m-1] + d;
+    if( m > 2 && (( ( 1970 + ( int )y ) % 4 == 0 && ( 1970 + ( int )y ) % 100 != 0 ) || ( 1970 + ( int )y ) % 400 == 0 ))
+        doy++;  /* leap day */
+    /* days now = total days from 0 to end of current year.
+       days - (days_in_full_year - doy) gives epoch days. */
+    int days_in_year = 365 + ((( ( 1970 + ( int )y ) % 4 == 0 && ( 1970 + ( int )y ) % 100 != 0 ) || ( 1970 + ( int )y ) % 400 == 0 ) ? 1 : 0);
+    days = days - ( days_in_year - doy ) + 1;  /* +1: Jan 1 is day 1 */
+    
+    return days * 86400 + frame_zda.time.hours * 3600 + frame_zda.time.minutes * 60 + frame_zda.time.seconds;
+}
+
 void gnss_parse_handler( char *nmea )
 {
     gnss_nmea_parse( nmea );

@@ -857,6 +857,11 @@ static void app_tracker_scan_result_send( void )
         memcpy( tracker_scan_data_temp + tracker_scan_temp_len, tracker_gps_scan_data, tracker_gps_scan_len );
         tracker_scan_temp_len += tracker_gps_scan_len;
 
+        /* v23: embed GPS epoch time (4 bytes, little-endian) after lon+lat */
+        uint32_t epoch = gnss_get_epoch( );
+        memcpyr( tracker_scan_data_temp + tracker_scan_temp_len, ( uint8_t *)( &epoch ), 4 );
+        tracker_scan_temp_len += 4;
+
         /* v23: motion gate — extract current position, check distance */
         {
             int32_t cur_lat, cur_lon;
