@@ -770,6 +770,7 @@ static void app_tracker_scan_result_send( void )
 
     /* v23: motion gate — skip cache save if within 25m of last known position */
     static int32_t last_lat = 0, last_lon = 0;
+    static uint32_t last_tx_time = 0;   /* RTC seconds of last successful save */
     bool moved = true;  /* default: allow save (first run, no GPS, or moved) */
 
     if(( packet_policy == RETRY_STATE_1C ) || ( event_state == TRACKER_STATE_BIT8_USER ))
@@ -888,12 +889,21 @@ static void app_tracker_scan_result_send( void )
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xBE;
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xEF;
 
-        /* v23: motion gate — only cache + send if moved ≥25m, or user triggered */
-        if ( moved || event_state == TRACKER_STATE_BIT8_USER )
+        /* v23: motion gate — only cache + send if moved ≥25m, user triggered, or hourly heartbeat */
+        /* Heartbeat: force a save if it's been ≥1 hour since last successful TX */
+        bool heartbeat = ( last_tx_time > 0 && ( hal_rtc_get_time_s( ) - last_tx_time ) >= 3600 );
+        if ( moved || event_state == TRACKER_STATE_BIT8_USER || heartbeat )
         {
             tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
             send_ok = true;
             cache_consumer_trigger( );
+            last_tx_time = hal_rtc_get_time_s( );
+            /* Heartbeat resets position baseline so next scan doesn't fire twice */
+            if ( heartbeat && !moved )
+            {
+                last_lat = cur_lat;
+                last_lon = cur_lon;
+            }
         }
         if( send_ok ) tracker_gps_scan_len = 0;
     }
