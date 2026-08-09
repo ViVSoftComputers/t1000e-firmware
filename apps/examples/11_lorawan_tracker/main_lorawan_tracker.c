@@ -619,12 +619,20 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         {
             smtc_modem_alarm_start_timer( tracker_periodic_interval );
         }
+        else
+        {
+            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+        }
     }
     else if( status == SMTC_MODEM_EVENT_TXDONE_NOT_SENT )
     {
         /* Blocked — retry at scan interval */
         cache_drain_active = false;
         if( tracker_cache_count( ) > 0 )
+        {
+            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+        }
+        else
         {
             smtc_modem_alarm_start_timer( tracker_periodic_interval );
         }
