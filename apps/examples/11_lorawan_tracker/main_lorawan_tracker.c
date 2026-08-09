@@ -926,8 +926,12 @@ static void app_tracker_scan_result_send( void )
         {
             /* Motion gate blocked this scan — restart the periodic alarm so
              * the next scan fires on schedule. Without this, the alarm system
-             * stalls because on_modem_tx_done() is never called. */
+             * stalls because on_modem_tx_done() is never called.
+             * Also decrement scan_result_num and clear GPS data so stale
+             * buffers don't get re-processed on the next cycle. */
             smtc_modem_alarm_start_timer( tracker_periodic_interval );
+            if( tracker_gps_scan_len ) scan_result_num -= 1;
+            tracker_gps_scan_len = 0;
         }
         if( send_ok ) tracker_gps_scan_len = 0;
     }
