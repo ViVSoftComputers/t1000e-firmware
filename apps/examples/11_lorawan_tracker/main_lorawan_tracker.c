@@ -905,6 +905,13 @@ static void app_tracker_scan_result_send( void )
                 memcpyr( ( uint8_t *)( &last_lat ), tracker_gps_scan_data + 4, 4 );
             }
         }
+        else
+        {
+            /* Motion gate blocked this scan — restart the periodic alarm so
+             * the next scan fires on schedule. Without this, the alarm system
+             * stalls because on_modem_tx_done() is never called. */
+            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+        }
         if( send_ok ) tracker_gps_scan_len = 0;
     }
     else if( tracker_wifi_scan_len )
