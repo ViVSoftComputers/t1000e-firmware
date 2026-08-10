@@ -29,17 +29,19 @@ The button controls are redesigned for v24. SOS mode is removed. All data flows 
 
 | Press | Action | Beep Feedback |
 |-------|--------|---------------|
-| **Single-press** | Trigger immediate scan | **Short ack beep** on press (~40ms) · After scan: 3 short beeps = GPS fix, 2 long beeps = no fix |
+| **Single-press** | Trigger immediate scan | **Short ack beep** on press (~40ms) · After 45s scan: 3 short beeps = GPS fix, 2 long beeps = no fix |
 | **Double-press** | Toggle **turbo mode** | 500ms long beep on enter, 500ms long beep on exit |
 | **Triple-press** | BLE advertising (unchanged) | — |
+| **Quad-press** | **Force drain cache** | 500ms long beep on start, 500ms long beep when drain completes |
 | **Long-press** (3s) | Power off (unchanged) | Power-off melody |
 
 ### Single-Press Flow
 1. Button press → **immediate 40ms ack beep**
-2. ~30s GNSS scan
+2. ~45s GNSS scan with timeout
 3. Data saved to cache
 4. 3 short beeps (GPS fix) or 2 long beeps (no fix)
 5. If drain is active: scan queues, runs after drain completes
+6. Multiple presses during scan: queued and processed sequentially
 
 ### Turbo Mode
 - Scans every **~1 minute** (instead of your configured interval)
@@ -47,6 +49,13 @@ The button controls are redesigned for v24. SOS mode is removed. All data flows 
 - Data is cached and drains on schedule — same as normal mode
 - **Paused during drain** — resumes after cache is empty
 - Double-press again to exit turbo and restore the previous interval
+
+### Force Drain (Quad-Press)
+- Press 4× rapidly → 500ms beep (start) → consumer fast-drains all cached entries
+- In range: entries drain at 3s intervals via confirmed uplinks
+- Out of range: one attempt, then stops
+- Cache empty → 500ms beep (finish)
+- Useful for flushing cached data immediately when back in range
 
 ### Motion Gate (v23)
 
