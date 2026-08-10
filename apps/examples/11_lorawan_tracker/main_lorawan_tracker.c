@@ -643,9 +643,9 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         if( event_state == TRACKER_STATE_BIT8_USER )
         {
             app_beep_pos_s( );
+            event_state = 0;  /* cleared AFTER user beep, not on every TX */
         }
     }
-    event_state = 0;
 }
 
 /* Trigger cache consumer: start drain if not active */
@@ -1383,7 +1383,7 @@ bool app_send_frame( const uint8_t* buffer, const uint8_t length, bool tx_confir
 void app_tracker_new_run( uint8_t event )
 {
     event_state = event;
-    if( tracker_scan_status == 0 ) // Not tracking is doing
+    if( tracker_scan_status == 0 ) // Not tracking — start new scan immediately
     {
         smtc_modem_status_mask_t modem_status;
         smtc_modem_get_status( 0, &modem_status );
