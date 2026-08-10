@@ -632,7 +632,10 @@ static void cache_consumer_trigger( void )
         {
             cache_drain_active = true;
             /* Use CONFIRMED — only pop on real ACK */
-            app_send_frame( entry, entry_len, true, false );
+            if( !app_send_frame( entry, entry_len, true, false ) )
+            {
+                cache_drain_active = false;  /* send failed — retry next tick */
+            }
         }
     }
 }
