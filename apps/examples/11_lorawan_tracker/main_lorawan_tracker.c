@@ -1368,9 +1368,9 @@ void app_tracker_new_run( uint8_t event )
     {
         /* Don't interrupt an active drain. The drain chain will restart
          * the scan when the cache empties. Event stays queued. */
-        if( cache_drain_active )
+                if( cache_drain_active )
         {
-            PRINTF( \"\\r\\nDRAIN ACTIVE — USER EVENT QUEUED\\r\\n\" );
+            /* User pressed during drain - queued for next cycle */
             return;
         }
         smtc_modem_status_mask_t modem_status;
