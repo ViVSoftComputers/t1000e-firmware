@@ -89,7 +89,6 @@ uint32_t tracker_periodic_interval = 60;    // in minute
 
 /* Turbo mode — double-press toggles 30-second scan interval */
 static bool     turbo_active = false;
-        smtc_modem_alarm_start_timer( 1 );  /* kick drain on turbo exit */
 static uint32_t saved_periodic_interval = 60;
 
 uint8_t wifi_scan_max = 3;
@@ -609,14 +608,24 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         }
         else
         {
-            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+            /* Cache empty — if user event is queued, scan immediately */
+            smtc_modem_alarm_start_timer( 
+                event_state == TRACKER_STATE_BIT8_USER ? 1 : tracker_periodic_interval );
         }
     }
     else
     {
-        /* Out of range (SENT/NOT_SENT) — stop, retry next schedule */
+        /* Out of range (SENT/NOT_SENT) — stop, retry next schedule.
+         * If cache is empty AND user event queued, scan immediately. */
         cache_drain_active = false;
-        smtc_modem_alarm_start_timer( tracker_periodic_interval );
+        if( tracker_cache_count( ) == 0 && event_state == TRACKER_STATE_BIT8_USER )
+        {
+            smtc_modem_alarm_start_timer( 1 );
+        }
+        else
+        {
+            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+        }
     }
 }
 
@@ -1357,6 +1366,13 @@ void app_tracker_new_run( uint8_t event )
     event_state = event;
     if( tracker_scan_status == 0 ) // Not tracking — start new scan immediately
     {
+        /* Don't interrupt an active drain. The drain chain will restart
+         * the scan when the cache empties. Event stays queued. */
+        if( cache_drain_active )
+        {
+            PRINTF( \"\\r\\nDRAIN ACTIVE — USER EVENT QUEUED\\r\\n\" );
+            return;
+        }
         smtc_modem_status_mask_t modem_status;
         smtc_modem_get_status( 0, &modem_status );
         if(( modem_status & SMTC_MODEM_STATUS_JOINED ) == SMTC_MODEM_STATUS_JOINED )
@@ -1424,7 +1440,11 @@ void app_tracker_turbo_toggle( void )
         /* Exit turbo — restore saved interval */
         tracker_periodic_interval = saved_periodic_interval;
         turbo_active = false;
-        smtc_modem_alarm_start_timer( 1 );  /* kick drain on turbo exit */
+        /* Kick drain, but don't interrupt a running scan */
+        if( tracker_scan_status != 1 )
+        {
+            smtc_modem_alarm_start_timer( 1 );
+        }
     }
     else
     {
