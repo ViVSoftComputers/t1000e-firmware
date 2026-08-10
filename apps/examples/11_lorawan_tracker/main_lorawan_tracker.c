@@ -962,23 +962,14 @@ static void app_tracker_scan_result_send( void )
 
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xBE;
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xEF;
-        /* v25: Motion gate with 5-min stationary heartbeat.
-         * - Moving (>25m): always save
-         * - User/turbo: always save
-         * - Stationary ≤5 min: gate blocks — cache conserved
-         * - Stationary >5 min: one save, timer resets */
-        bool heartbeat = ( last_tx_time > 0 && ( hal_rtc_get_time_s( ) - last_tx_time ) >= tracker_periodic_interval );
-        if ( moved || event_state == TRACKER_STATE_BIT8_USER || turbo_active || heartbeat )
+        /* v25: Pure motion gate — only cache entries that represent movement.
+         * Stationary device = empty cache = consumer finds nothing to drain.
+         * User presses and turbo always bypass the gate. */
+        if ( moved || event_state == TRACKER_STATE_BIT8_USER || turbo_active )
         {
             tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
             send_ok = true;
             last_tx_time = hal_rtc_get_time_s( );
-            /* Heartbeat resets position baseline so next scan doesn't fire twice */
-            if ( heartbeat && !moved )
-            {
-                memcpyr( ( uint8_t *)( &last_lon ), tracker_gps_scan_data, 4 );
-                memcpyr( ( uint8_t *)( &last_lat ), tracker_gps_scan_data + 4, 4 );
-            }
         }
         if( send_ok ) tracker_gps_scan_len = 0;
     }
