@@ -642,7 +642,7 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
     {
         if( event_state == TRACKER_STATE_BIT8_USER )
         {
-            app_beep_pos_s( );
+            /* beep moved to app_tracker_scan_result_send — fires at scan time, not TX time */
             event_state = 0;  /* cleared AFTER user beep, not on every TX */
         }
     }
