@@ -1,10 +1,10 @@
-# T1000-E Tracker Firmware — v23 Motion Gate Edition
+# T1000-E Tracker Firmware — v24 Producer/Consumer Edition
 
-Built: 2026-08-08
+Built: 2026-08-09
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html?srsltid=AfmBOoqFlj0sVbadGcyUSr_rvJ528UYaUHDS0Be087KTa7Tn1kPZtYKe&sensecap_affiliate=agiE1S0&referring_service=link) (nRF52840 + LR1110)
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v23 changes from v22:** Motion gate — skips cache save + LoRa TX when stationary (within 25m of last GPS fix). User-triggered scans and non-GPS scans always save. Turbo mode unchanged.
+> **v24 is a complete architectural rewrite.** Producer and consumer are fully separated — the producer only writes to cache, the consumer drains independently on schedule. Fast-drain burst when in range, stops when out of range. User/turbo scans queue behind the drain.
 
 ## 📖 Read the Full Article
 
@@ -23,26 +23,30 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 
 You can restore factory firmware at any time by dragging the backup UF2 back onto the device in bootloader mode.
 
-## v22 Button Behavior
+## v24 Button Behavior
 
-The button controls are **completely redesigned** in v22. SOS mode is removed. All data still flows through the cache engine with confirmed uplinks.
+The button controls are redesigned for v24. SOS mode is removed. All data flows through the cache with strict producer/consumer separation.
 
 | Press | Action | Beep Feedback |
 |-------|--------|---------------|
-| **Single-press** | Trigger immediate scan | After scan: 3 short beeps = GPS fix obtained, 2 long beeps = no GPS fix |
+| **Single-press** | Trigger immediate scan | **Short ack beep** on press (~40ms) · After scan: 3 short beeps = GPS fix, 2 long beeps = no fix |
 | **Double-press** | Toggle **turbo mode** | 500ms long beep on enter, 500ms long beep on exit |
 | **Triple-press** | BLE advertising (unchanged) | — |
 | **Long-press** (3s) | Power off (unchanged) | Power-off melody |
 
+### Single-Press Flow
+1. Button press → **immediate 40ms ack beep**
+2. ~30s GNSS scan
+3. Data saved to cache
+4. 3 short beeps (GPS fix) or 2 long beeps (no fix)
+5. If drain is active: scan queues, runs after drain completes
+
 ### Turbo Mode
 - Scans every **~1 minute** (instead of your configured interval)
 - Beeps **once** after each scan completes
-- Data is still cached and sent via confirmed uplinks — same as normal mode
-- **Saves and restores** your previous scan interval — if you changed it via downlink, turbo remembers the exact value
+- Data is cached and drains on schedule — same as normal mode
+- **Paused during drain** — resumes after cache is empty
 - Double-press again to exit turbo and restore the previous interval
-
-### No SOS
-All SOS functionality (SOS downlink commands, SOS LED pattern, SOS beep) has been removed. The `DATA_ID_DW_PACKET_SOS_CONTINUOUS` downlink is accepted as a no-op — it won't break anything but does nothing.
 
 ### Motion Gate (v23)
 
@@ -61,60 +65,59 @@ The GPS scan itself still runs — beep feedback continues to indicate fix/no-fi
 
 To prevent the device from going completely silent when stationary, a **1-hour heartbeat** ensures at least one position is transmitted every hour — even if you haven't moved. This keeps the map alive and proves the device is still working.
 
-## Architecture
+## Architecture (v24)
 
 ```mermaid
 flowchart TD
     subgraph Device["T1000-E Firmware"]
         direction TB
-        SCAN["Periodic Scan Timer<br/>(configurable via downlink)"]
+        SCHEDULE["Schedule Timer<br/>(shared heartbeat)"]
         PRODUCER["<b>Producer</b><br/>app_tracker_scan_result_send()"]
-        CACHE[("Ring Buffer Cache<br/>200 entries · 4h TTL")]
-        TRIGGER["<b>Consumer Trigger</b><br/>cache_consumer_trigger()"]
-        DRAIN["<b>Drain Timer</b><br/>3s between entries"]
+        CACHE[("Ring Buffer Cache<br/>1,000 entries")]
+        CONSUMER["<b>Consumer</b><br/>cache_consumer_trigger()"]
         TX["<b>LoRa TX</b><br/>app_send_frame()<br/>confirmed uplinks"]
         TXDONE["<b>TX Done Handler</b><br/>on_modem_tx_done()"]
         LORA[("LoRaWAN<br/>Network")]
     end
 
-    SCAN -->|"scan complete"| PRODUCER
-    PRODUCER -->|"tracker_cache_save()"| CACHE
-    PRODUCER -->|"kick drain"| TRIGGER
-    TRIGGER -->|"tracker_cache_get(0)<br/>oldest entry"| CACHE
-    TRIGGER -->|"app_send_frame()"| TX
+    SCHEDULE -->|"tick"| CONSUMER
+    CONSUMER -->|"if cache + in range"| TX
+    CONSUMER -->|"if out of range: stop"| SCHEDULE
     TX -->|"confirmed uplink"| LORA
-    LORA -->|"ACK / no ACK"| TXDONE
-    TXDONE -->|"CONFIRMED: pop + 3s alarm"| DRAIN
-    TXDONE -->|"SENT: retry at scan interval"| DRAIN
-    DRAIN -->|"next entry"| TRIGGER
+    LORA -->|"ACK"| TXDONE
+    TXDONE -->|"CONFIRMED: pop + 3s chained drain"| CONSUMER
+    TXDONE -->|"NOT_SENT: stop, wait for schedule"| SCHEDULE
+    TXDONE -->|"cache empty"| SCHEDULE
+    SCHEDULE -->|"after drain"| PRODUCER
+    PRODUCER -->|"tracker_cache_save() ONLY"| CACHE
 
     style PRODUCER fill:#2d5a27,stroke:#4a9,color:#fff
-    style TRIGGER fill:#5a2727,stroke:#a44,color:#fff
+    style CONSUMER fill:#5a2727,stroke:#a44,color:#fff
     style TXDONE fill:#5a2727,stroke:#a44,color:#fff
     style CACHE fill:#274a5a,stroke:#49a,color:#fff
 ```
 
-### Producer / Consumer Pattern
+### Producer / Consumer Separation (v24)
 
-The firmware uses a strict producer/consumer design with a single rule: **only the consumer calls `app_send_frame()` for sensor data.**
+The firmware enforces strict separation with a single rule: **only the consumer calls `app_send_frame()` for sensor data. The producer only writes to cache.**
 
 **Producer** (`app_tracker_scan_result_send`):
-- Fires on every periodic scan (configurable interval)
-- Collects GPS, WiFi, BLE, temperature, light, battery, accelerometer
-- Builds the LoRaWAN payload with `beef` signature
-- Calls `tracker_cache_save()` — saves to ring buffer unconditionally
-- Calls `cache_consumer_trigger()` — wakes up the consumer if asleep
-- **Never** calls `app_send_frame()` directly
+- Fires on schedule OR user single-press OR turbo double-press
+- Collects GPS, temperature, light, battery, accelerometer
+- Builds payload with GPS epoch timestamp + `beef` signature
+- Calls `tracker_cache_save()` — writes to ring buffer
+- **Never** calls `app_send_frame()` or `cache_consumer_trigger()`
 
 **Consumer** (`cache_consumer_trigger` + `on_modem_tx_done`):
 - The **only** code path that calls `app_send_frame()` for sensor uplinks
+- Runs on the shared schedule tick
 - Pulls from cache FIFO (`tracker_cache_get(0)` = oldest entry)
 - Sends **confirmed** uplinks — only pops entries when network ACKs
-- On TXDONE_CONFIRMED: pop entry → 3s drain timer → send next
-- On TXDONE_SENT (transmitted but no ACK): retry at scan interval, entry stays cached
-- On TXDONE_NOT_SENT (blocked by duty cycle): same retry behavior
+- **In range (CONFIRMED):** pops entry → 3s chain → fast-drains ALL remaining entries
+- **Out of range (NOT_SENT):** stops immediately — waits for next schedule tick
+- When cache empty: next schedule tick runs the producer for a new scan
 
-**Key invariant:** Sensor data flows `scan → cache → drain → TX → ACK → pop`. No shortcuts.
+**Mutual exclusion:** While the consumer is draining (`cache_drain_active = true`), the producer is blocked. User and turbo scans queue behind the drain — they run automatically once the cache is empty.
 
 ### Cache Details
 
@@ -124,11 +127,11 @@ The firmware uses a strict producer/consumer design with a single rule: **only t
 | Entry size | 136 bytes (128 data + 8 metadata) |
 | RAM used | ~136 KB |
 | TTL | None — all entries replayed |
-| Storage at 10-min scan | ~166 hours (~7 days) |
+| Storage at 5-min scan | ~83 hours (~3.5 days) |
 | Storage at 1-min turbo | ~16 hours |
 | Overflow | FIFO — oldest overwritten when full |
-| Drain speed | 3 seconds between entries (fast flush when back in range) |
-| Retry interval | Matches scan interval (no extra battery drain vs factory) |
+| Drain speed (in range) | 3 seconds between entries (fast burst) |
+| Drain speed (out of range) | One attempt per schedule tick, then stops |
 | Delivery guarantee | Confirmed uplinks — ACK required before pop |
 
 ### Cache Flow: Offline → Online
@@ -141,30 +144,35 @@ sequenceDiagram
 
     Note over D,G: === IN RANGE ===
     D->>C: scan → save entry
-    C->>D: trigger drain
+    Note over D: schedule tick → drain
     D->>G: confirmed TX (entry 1)
     G-->>D: ACK ✓
     D->>C: pop entry 1
-    Note over C: cache empty, drain stops
-
-    Note over D,G: === OUT OF RANGE ===
-    D->>C: scan → save entry 2
-    C->>D: trigger drain
-    D--xG: confirmed TX (entry 2)
-    Note over D: no ACK → retry
-    D->>C: scan → save entry 3
-    Note over C: 2 entries cached
-    D--xG: confirmed TX (entry 2, retry)
-    Note over D: still no ACK
-
-    Note over D,G: === BACK IN RANGE ===
-    D->>G: confirmed TX (entry 2, retry)
+    D->>G: confirmed TX (entry 2, 3s chain)
     G-->>D: ACK ✓
     D->>C: pop entry 2
-    D->>G: confirmed TX (entry 3)
+    Note over C: cache empty → drain stops → next tick: scan
+
+    Note over D,G: === OUT OF RANGE ===
+    D->>C: scan → save entry 3
+    Note over D: schedule tick → drain
+    D--xG: confirmed TX (entry 3)
+    Note over D: NOT_SENT → stop
+    D->>C: scan → save entry 4
+    Note over C: entries accumulate
+    Note over D: schedule tick → drain
+    D--xG: confirmed TX (entry 3, retry)
+    Note over D: still NOT_SENT → stop
+
+    Note over D,G: === BACK IN RANGE ===
+    Note over D: schedule tick → drain
+    D->>G: confirmed TX (entry 3, retry)
     G-->>D: ACK ✓
     D->>C: pop entry 3
-    Note over C: cache empty, drain stops
+    D->>G: confirmed TX (entry 4, 3s chain)
+    G-->>D: ACK ✓
+    D->>C: pop entry 4
+    Note over C: cache empty → drain stops → next tick: scan
 ```
 
 ## Downlink Configuration
@@ -206,6 +214,7 @@ Power-on uplink (FPort 5) ends in `XX c0 de` where XX is the firmware version:
 | v21 | `...15 c0 de` |
 | v22 | `...16 c0 de` |
 | v23 | `...17 c0 de` |
+| v24 | `...18 c0 de` |
 
 All sensor uplinks end in `be ef`.
 
@@ -297,9 +306,11 @@ print(f'Done: {len(o)} bytes, {t} blocks')
 | **gcc_startup_nrf52840.S** | SES's `thumb_crt0.s` is SEGGER-specific. nRF5 SDK's GCC startup provides the correct vector table. |
 | **UF2 family 0x28860057** | T1000-E bootloader requires this. Standard nRF52840 family (0xADA52840) is silently rejected. |
 | **No MBR blocks** | UF2 blocks at 0x0-0xFFF cause bootloader rejection. Must strip before flashing. |
-| **Confirmed drain** | Unconfirmed drain lost entries (SENT → popped without arrival). Confirmed uplinks with ACK-based pop are correct. |
-| **Timer-based cascade** | Calling `app_send_frame()` from inside `on_modem_tx_done()` is not re-entrant safe. Use 3s drain timer instead of callback cascade. |
-| **Retry = scan interval** | 30s retry burned battery for no benefit. Matching retry to scan interval adds zero extra TXs vs factory firmware. |
+| **Producer/consumer separation** | Producer only calls `tracker_cache_save()`. Consumer is the ONLY path for `app_send_frame()`. No shortcuts. |
+| **Hybrid drain** | In range: fast-drain all entries at 3s intervals. Out of range: one attempt, then stop — wait for next schedule. Same behavior in-range or out-of-range — no special offline mode. |
+| **Mutual exclusion** | Consumer blocks producer via `cache_drain_active`. User/turbo scans queue behind drain. |
+| **Confirmed drain** | Only pop cache entries on CONFIRMED ACK. SENT/NOT_SENT keep entry in cache for next retry. |
+| **GPS epoch in payload** | 4 bytes of GPS epoch time embedded in every v24 payload. Positions retain original timestamps through offline cache replay. |
 
 ## Pitfalls
 
