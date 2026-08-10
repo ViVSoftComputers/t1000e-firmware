@@ -1109,7 +1109,6 @@ static void app_tracker_scan_result_send( void )
                 }
                 hal_pwm_deinit( );
             }
-        event_state = 0;  /* user event consumed */
         /* If another press was queued during this scan, process it */
         if( user_press_pending > 0 )
         {
@@ -1126,6 +1125,8 @@ static void app_tracker_scan_result_send( void )
             hal_beep_off( );
             hal_pwm_deinit( );
         }
+        event_state = 0;  /* clear after every scan */
+
 
         /* Producer schedules its own next scan — never kicks consumer.
          * Consumer drains on its own independent timer. */
