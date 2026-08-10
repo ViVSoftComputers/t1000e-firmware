@@ -15,6 +15,7 @@ extern "C" {
 #define BUTTON_PRESS_ONECE      1
 #define BUTTON_PRESS_TWICE      2
 #define BUTTON_PRESS_THRICE     3
+#define BUTTON_PRESS_FOUR_TIMES 4
 
 #define TRACKER_STATE_BIT8_USER     0x80
 

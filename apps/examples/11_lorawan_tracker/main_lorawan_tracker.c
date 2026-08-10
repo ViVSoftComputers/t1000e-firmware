@@ -122,6 +122,7 @@ uint8_t tracker_scan_data_temp[64] = { 0 };
 
 bool scan_result = false;
 static bool cache_drain_active = false;
+static bool force_drain_pending = false;    /* completion beep after force-drain */
 int8_t scan_result_num = 0;
 
 uint8_t event_state = 0;
@@ -610,7 +611,17 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         }
         else
         {
-            /* Cache empty — if user event is queued, scan immediately */
+            /* Cache empty — if user event is queued, scan immediately.
+             * If force-drain was requested, beep completion. */
+            if( force_drain_pending )
+            {
+                force_drain_pending = false;
+                hal_pwm_init( 2000 );
+                hal_beep_on( );
+                hal_mcu_wait_ms( 500 );
+                hal_beep_off( );
+                hal_pwm_deinit( );
+            }
             smtc_modem_alarm_start_timer( 
                 event_state == TRACKER_STATE_BIT8_USER ? 1 : tracker_periodic_interval );
         }
@@ -1463,6 +1474,12 @@ void app_tracker_set_interval( uint32_t minutes )
 uint32_t app_tracker_get_interval( void )
 {
     return tracker_periodic_interval;
+}
+
+void app_tracker_force_drain( void )
+{
+    force_drain_pending = true;
+    smtc_modem_alarm_start_timer( 1 );  /* kick drain immediately */
 }
 
 void app_tracker_turbo_toggle( void )

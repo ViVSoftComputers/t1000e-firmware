@@ -11,6 +11,7 @@
  * so use extern declarations. */
 extern void app_tracker_turbo_toggle( void );
 extern bool app_tracker_is_turbo( void );
+extern void app_tracker_force_drain( void );
 
 APP_TIMER_DEF(m_button_event_timer_id);
 APP_TIMER_DEF(m_ble_adv_event_timer_id);
@@ -216,6 +217,40 @@ void app_user_button_event_timeout_handler( void *p_context )
             }
             break;
 
+            case BUTTON_PRESS_FOUR_TIMES: // manual force-drain
+            {
+                button_click_cnt = 0;
+
+                if( ble_adv_flag == true )
+                {
+                    return;
+                }
+
+                smtc_modem_status_mask_t modem_status;
+                smtc_modem_get_status( 0, &modem_status );
+                if(( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
+                {
+                    return;
+                }
+
+                /* Long beep: drain starting */
+                hal_pwm_init( 2000 );
+                hal_beep_on( );
+                hal_mcu_wait_ms( 500 );
+                hal_beep_off( );
+                hal_pwm_deinit( );
+
+                app_tracker_force_drain( );
+
+                /* Long beep: drain complete */
+                hal_pwm_init( 2000 );
+                hal_beep_on( );
+                hal_mcu_wait_ms( 500 );
+                hal_beep_off( );
+                hal_pwm_deinit( );
+            }
+            break;
+
             default:
             break;
         }
@@ -292,9 +327,9 @@ void app_user_button_det( void )
             app_timer_start( m_button_event_timer_id,  APP_TIMER_TICKS( BUTTON_PRESS_CLICK ), NULL );
 
             button_click_cnt ++;
-            if( button_click_cnt > 3 )
+            if( button_click_cnt > 4 )
             {
-                button_click_cnt = 3;
+                button_click_cnt = 4;
             }
         }
     }
