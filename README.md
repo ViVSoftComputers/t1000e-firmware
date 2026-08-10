@@ -1,6 +1,6 @@
 # T1000-E Tracker Firmware — v25 Independent Producer/Consumer Edition
 
-Built: 2026-08-10 (v25)  
+Built: 2026-08-10  
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + LR1110)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
@@ -58,15 +58,19 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 - Cache empty → 500ms beep (finish)
 - Useful for flushing cached data immediately
 
-### Motion Gate
-When GPS fix is available: positions < 25m from last saved position are skipped to save battery/airtime.
+### Motion Gate (25m)
+Pure motion gate — only cache entries when the device actually moves.
 
-**Always saved regardless of movement:**
-- User-triggered scans (single-press)
-- Turbo-mode scans
-- First GPS fix after power-on
-- WiFi-only and BLE-only scans (no GPS data to compare)
-- 1-hour heartbeat (keeps map alive, proves device is working)
+| Condition | Saves to cache? |
+|---|---|
+| **Moved >25m** (GPS jitter compared to last saved position) | ✅ Yes |
+| **Stationary** (GPS fix within 25m of last position) | ❌ No — cache stays empty, consumer finds nothing to drain |
+| **No GPS fix** (can't determine if moved) | ✅ Yes — can't gate what you can't measure |
+| **User press** (single-click) | ✅ Yes — always saves |
+| **Turbo active** (double-click) | ✅ Yes — always saves |
+| **First GPS fix after power-on** | ✅ Yes — establishes baseline |
+
+Result: stationary device → empty cache → consumer fires on schedule, finds nothing, waits. battery and airtime conserved.
 
 ## Architecture (v25)
 
@@ -100,8 +104,11 @@ flowchart LR
         P_TIMER["producer_next_s"]
         SCAN["app_tracker_scan_process()"]
         SAVE["tracker_cache_save()"]
+        GATE["Motion gate: moved >25m?"]
         P_TIMER -->|"timer expires"| SCAN
-        SCAN -->|"GPS fix / no fix"| SAVE
+        SCAN -->|"GPS fix / no fix"| GATE
+        GATE -->|"yes"| SAVE
+        GATE -->|"no (stationary)"| SKIP["skip — cache conserved"]
     end
 
     subgraph CACHE["Ring Buffer Cache"]
@@ -131,7 +138,7 @@ flowchart LR
 |---|---|---|
 | **Timer variable** | `producer_next_s` (absolute RTC) | `consumer_next_s` (absolute RTC) |
 | **Schedule function** | `schedule_producer(delay)` | `schedule_consumer(delay)` |
-| **Default interval** | `tracker_periodic_interval` (5min / 1min turbo) | `tracker_drain_interval` (always 5min) |
+| **Default interval** | `tracker_periodic_interval` (configurable via downlink) | `tracker_drain_interval` (always 5min) |
 | **Never touches** | `app_send_frame()` or LoRa | `tracker_cache_save()` or GPS/sensors |
 
 `sync_alarm()` picks the sooner of the two timers for the single modem alarm — both fire independently.
@@ -141,8 +148,8 @@ flowchart LR
 | Watchdog | Side | Trigger | Action |
 |---|---|---|---|
 | **Scan stall** | Producer | Same scan status for 3 alarm ticks | Force-reset to idle |
-| **Drain TX timeout** | Consumer | `cache_drain_active` stays true > 60s | Force-reset `cache_drain_active` |
-| **send_frame failure** | Consumer | `app_send_frame()` returns false | Immediate drain reset, retry next tick |
+| **Drain TX timeout** | Consumer | `cache_drain_active` stays true > 60s | Force-reset and reschedule |
+| **send_frame failure** | Consumer | `app_send_frame()` returns false | Immediate drain reset |
 
 ### Drain Chain
 
@@ -164,12 +171,30 @@ When out of range:
 
 1. **Producer never calls `app_send_frame()`** — GPS/sensors only write to cache
 2. **Consumer never calls `tracker_cache_save()`** — LoRa only reads/drains from cache
-3. **`tracker_drain_interval` ≠ `tracker_periodic_interval`** — drain always at 5min, scan varies with turbo
-4. **Turbo always saves** — explicit user action bypasses motion gate
-5. **Confirmed uplinks only** — cache entries popped only on real ACK, not on NOT_SENT
-6. **No mutual exclusion** — producer and consumer run concurrently in `on_modem_alarm()`
-7. **Multiple presses queued** — pressing while scanning queues additional scans
-8. **60s TX watchdog** — if modem never calls TX-done, consumer recovers automatically
+3. **`tracker_drain_interval` ≠ `tracker_periodic_interval`** — drain always at 5min, scan configurable via downlink
+4. **Pure motion gate** — no heartbeat forcing saves when stationary; empty cache = nothing to drain
+5. **Turbo always saves** — explicit user action bypasses motion gate
+6. **Confirmed uplinks only** — cache entries popped only on real ACK, not on NOT_SENT
+7. **No mutual exclusion** — producer and consumer run concurrently in `on_modem_alarm()`
+8. **Multiple presses queued** — pressing while scanning queues additional scans
+9. **60s TX watchdog** — if modem never calls TX-done, consumer recovers automatically
+
+## Configuring Scan Interval (Downlink)
+
+Send a downlink on FPort 5 to change the periodic scan interval:
+
+| Interval | Hex Payload |
+|---|---|
+| 2 min | `81 00 00 00 02` |
+| 5 min | `81 00 00 00 05` |
+| 10 min | `81 00 00 00 0A` |
+| 15 min | `81 00 00 00 0F` |
+| 30 min | `81 00 00 00 1E` |
+| 60 min | `81 00 00 00 3C` |
+
+**Format:** `81 00 00 HH LL` where HH LL = interval in minutes (big-endian).  
+**How to send:** ChirpStack → Device → Queue → FPort 5 → Hex payload.  
+The new interval takes effect on the next scan cycle.
 
 ## Cache
 
