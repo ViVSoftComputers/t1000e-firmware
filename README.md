@@ -1,336 +1,196 @@
-# T1000-E Tracker Firmware — v24 Producer/Consumer Edition
+# T1000-E Tracker Firmware — v24 Independent Producer/Consumer Edition
 
-Built: 2026-08-09
-Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html?srsltid=AfmBOoqFlj0sVbadGcyUSr_rvJ528UYaUHDS0Be087KTa7Tn1kPZtYKe&sensecap_affiliate=agiE1S0&referring_service=link) (nRF52840 + LR1110)
+Built: 2026-08-10  
+Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + LR1110)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v24 is a complete architectural rewrite.** Producer and consumer are fully separated — the producer only writes to cache, the consumer drains independently on schedule. Fast-drain burst when in range, stops when out of range. User/turbo scans queue behind the drain.
+> **v24 is a complete architectural rewrite.** Producer and consumer are fully independent — each has its own timer, own schedule, own watchdog. They share nothing except the ring buffer cache. Producer only touches GPS/sensors and writes to cache. Consumer only touches the LoRa radio and reads from cache. Neither blocks the other.
 
 ## 📖 Read the Full Article
 
 Detailed write-up with architecture diagrams, field test results, and flashing guide:  
-**[T1000-E Cache Firmware: Never Lose LoRaWAN Sensor Data Again](https://hub.lorameshdevices.com/projects/t1000-e-cache-firmware-never-lose-lorawan-sensor-data-again)** — published on LoRa Mesh Devices
+**[T1000-E Cache Firmware: Never Lose LoRaWAN Sensor Data Again](https://hub.lorameshdevices.com/projects/t1000-e-cache-firmware-never-lose-lorawan-sensor-data-again)** — LoRa Mesh Devices
 
 ## ⚠️ Before You Flash — Backup Your Factory Firmware
 
-**This is permanent.** Once flashed, the factory firmware on your device is overwritten. Before proceeding:
+**This is permanent.** Once flashed, the factory firmware is overwritten.
 
 1. Connect your T1000-E via USB-C
 2. Double-press the button rapidly to enter UF2 bootloader mode (device appears as a USB drive)
-3. Copy the file named `CURRENT.UF2` from the drive to your computer
-4. Rename it to something descriptive like `FACTORY_T1000E_BACKUP.uf2`
-5. Store it somewhere safe — this is your only path back to factory firmware
+3. Copy `CURRENT.UF2` from the drive to your computer
+4. Rename it to `FACTORY_T1000E_BACKUP.uf2` and store it somewhere safe
+5. To restore: drag the backup UF2 onto the device in bootloader mode
 
-You can restore factory firmware at any time by dragging the backup UF2 back onto the device in bootloader mode.
+## Flash
+
+1. Double-press the button to enter UF2 bootloader
+2. Drag `t1000-e-v24.uf2` onto the USB drive
+3. Device reboots automatically after flashing (~10 seconds)
 
 ## v24 Button Behavior
 
-The button controls are redesigned for v24. SOS mode is removed. All data flows through the cache with strict producer/consumer separation.
-
 | Press | Action | Beep Feedback |
 |-------|--------|---------------|
-| **Single-press** | Trigger immediate scan | **Short ack beep** on press (~40ms) · After 45s scan: 3 short beeps = GPS fix, 2 long beeps = no fix |
-| **Double-press** | Toggle **turbo mode** | 500ms long beep on enter, 500ms long beep on exit |
-| **Triple-press** | BLE advertising (unchanged) | — |
-| **Quad-press** | **Force drain cache** | 500ms long beep on start, 500ms long beep when drain completes |
-| **Long-press** (3s) | Power off (unchanged) | Power-off melody |
+| **Single-press** | Trigger immediate scan | **Short ack beep** on press (~40ms) · After 45s scan: 3 short = GPS fix, 2 long = no fix |
+| **Double-press** | Toggle **turbo mode** (~1min scans) | 500ms long beep on enter · 500ms long beep on exit |
+| **Triple-press** | BLE advertising | — |
+| **Quad-press** | **Force drain all cached entries** | 500ms long beep on start · 500ms long beep when complete |
+| **Long-press** (3s) | Power off | Power-off melody |
 
 ### Single-Press Flow
 1. Button press → **immediate 40ms ack beep**
-2. ~45s GNSS scan with timeout
-3. Data saved to cache
+2. ~45s GNSS scan with timeout (stall watchdog resets after 3 stuck ticks)
+3. Data saved to cache (never blocks if drain is running — producer is independent)
 4. 3 short beeps (GPS fix) or 2 long beeps (no fix)
-5. If drain is active: scan queues, runs after drain completes
-6. Multiple presses during scan: queued and processed sequentially
+5. Multiple presses while a scan is running: queued and processed sequentially
 
 ### Turbo Mode
-- Scans every **~1 minute** (instead of your configured interval)
+- Scans every **~1 minute** (independent of consumer drain interval)
 - Beeps **once** after each scan completes
-- Data is cached and drains on schedule — same as normal mode
-- **Paused during drain** — resumes after cache is empty
-- Double-press again to exit turbo and restore the previous interval
+- Data is cached — consumer drains on its **own 5-minute schedule**
+- Turbo scan entries always save (motion gate bypassed — turbo is an explicit user action)
+- Double-press again to exit and restore previous scan interval
 
 ### Force Drain (Quad-Press)
 - Press 4× rapidly → 500ms beep (start) → consumer fast-drains all cached entries
 - In range: entries drain at 3s intervals via confirmed uplinks
 - Out of range: one attempt, then stops
 - Cache empty → 500ms beep (finish)
-- Useful for flushing cached data immediately when back in range
+- Useful for flushing cached data immediately
 
-### Motion Gate (v23)
-
-When the device has a GPS fix, it compares the current position to the last saved position. If the device hasn't moved more than **25 meters**, the scan result is **not saved to cache and no LoRa TX is sent**. This saves battery and airtime when the device is stationary.
+### Motion Gate
+When GPS fix is available: positions < 25m from last saved position are skipped to save battery/airtime.
 
 **Always saved regardless of movement:**
-- User-triggered scans (single-press button)
+- User-triggered scans (single-press)
+- Turbo-mode scans
 - First GPS fix after power-on
 - WiFi-only and BLE-only scans (no GPS data to compare)
-
-The GPS scan itself still runs — beep feedback continues to indicate fix/no-fix. Only the data path is gated.
-
-> **Note:** No GPS = can't determine movement = always save. If you're indoors or in GPS-denied conditions, every scan will be cached regardless of whether the device actually moved.
-
-### Heartbeat (v23)
-
-To prevent the device from going completely silent when stationary, a **1-hour heartbeat** ensures at least one position is transmitted every hour — even if you haven't moved. This keeps the map alive and proves the device is still working.
+- 1-hour heartbeat (keeps map alive, proves device is working)
 
 ## Architecture (v24)
 
+### Core Principle: Complete Separation
+
+Producer and consumer share **nothing** except the ring buffer cache. Each has:
+- Its own timer (`producer_next_s` / `consumer_next_s`)
+- Its own watchdog
+- Its own schedule function (`schedule_producer()` / `schedule_consumer()`)
+- Its own state (scan state machine / drain state machine)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       on_modem_alarm()                          │
+│                                                                 │
+│  ┌─ if now >= consumer_next_s:                                 │
+│  │    ┌─ cache has entries + drain idle → drain one entry      │
+│  │    ├─ cache empty → schedule_consumer(drain_interval=300s)  │
+│  │    └─ drain active → watch for 60s timeout → schedule(3s)   │
+│  │                                                              │
+│  └─ if now >= producer_next_s:                                  │
+│       └─ app_tracker_scan_process() → GPS → save to cache      │
+│                                                                 │
+│  sync_alarm() → min(producer_next, consumer_next) → modem alarm│
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ```mermaid
-flowchart TD
-    subgraph Device["T1000-E Firmware"]
-        direction TB
-        SCHEDULE["Schedule Timer<br/>(shared heartbeat)"]
-        PRODUCER["<b>Producer</b><br/>app_tracker_scan_result_send()"]
-        CACHE[("Ring Buffer Cache<br/>1,000 entries")]
-        CONSUMER["<b>Consumer</b><br/>cache_consumer_trigger()"]
-        TX["<b>LoRa TX</b><br/>app_send_frame()<br/>confirmed uplinks"]
-        TXDONE["<b>TX Done Handler</b><br/>on_modem_tx_done()"]
-        LORA[("LoRaWAN<br/>Network")]
+flowchart LR
+    subgraph PRODUCER["PRODUCER — GPS & Sensors only"]
+        P_TIMER["producer_next_s"]
+        SCAN["app_tracker_scan_process()"]
+        SAVE["tracker_cache_save()"]
+        P_TIMER -->|"timer expires"| SCAN
+        SCAN -->|"GPS fix / no fix"| SAVE
     end
 
-    SCHEDULE -->|"tick"| CONSUMER
-    CONSUMER -->|"if cache + in range"| TX
-    CONSUMER -->|"if out of range: stop"| SCHEDULE
-    TX -->|"confirmed uplink"| LORA
-    LORA -->|"ACK"| TXDONE
-    TXDONE -->|"CONFIRMED: pop + 3s chained drain"| CONSUMER
-    TXDONE -->|"NOT_SENT: stop, wait for schedule"| SCHEDULE
-    TXDONE -->|"cache empty"| SCHEDULE
-    SCHEDULE -->|"after drain"| PRODUCER
-    PRODUCER -->|"tracker_cache_save() ONLY"| CACHE
+    subgraph CACHE["Ring Buffer Cache"]
+        RB[("200 entries<br/>concurrent read/write")]
+    end
 
-    style PRODUCER fill:#2d5a27,stroke:#4a9,color:#fff
-    style CONSUMER fill:#5a2727,stroke:#a44,color:#fff
-    style TXDONE fill:#5a2727,stroke:#a44,color:#fff
-    style CACHE fill:#274a5a,stroke:#49a,color:#fff
+    subgraph CONSUMER["CONSUMER — LoRa only"]
+        C_TIMER["consumer_next_s"]
+        DRAIN["cache_consumer_trigger()"]
+        TX["app_send_frame()<br/>confirmed uplinks"]
+        TXDONE["on_modem_tx_done()"]
+        C_TIMER -->|"timer expires"| DRAIN
+        DRAIN -->|"get oldest entry"| TX
+        TX -->|"LoRaWAN"| TXDONE
+        TXDONE -->|"CONFIRMED: pop"| DRAIN
+        TXDONE -->|"NOT_SENT: stop"| C_TIMER
+    end
+
+    SAVE -->|"append"| RB
+    DRAIN -->|"read front"| RB
+    TXDONE -->|"pop front"| RB
 ```
 
-### Producer / Consumer Separation (v24)
+### Timer Separation
 
-The firmware enforces strict separation with a single rule: **only the consumer calls `app_send_frame()` for sensor data. The producer only writes to cache.**
+| | Producer | Consumer |
+|---|---|---|
+| **Timer variable** | `producer_next_s` (absolute RTC) | `consumer_next_s` (absolute RTC) |
+| **Schedule function** | `schedule_producer(delay)` | `schedule_consumer(delay)` |
+| **Default interval** | `tracker_periodic_interval` (5min / 1min turbo) | `tracker_drain_interval` (always 5min) |
+| **Never touches** | `app_send_frame()` or LoRa | `tracker_cache_save()` or GPS/sensors |
 
-**Producer** (`app_tracker_scan_result_send`):
-- Fires on schedule OR user single-press OR turbo double-press
-- Collects GPS, temperature, light, battery, accelerometer
-- Builds payload with GPS epoch timestamp + `beef` signature
-- Calls `tracker_cache_save()` — writes to ring buffer
-- **Never** calls `app_send_frame()` or `cache_consumer_trigger()`
+`sync_alarm()` picks the sooner of the two timers for the single modem alarm — both fire independently.
 
-**Consumer** (`cache_consumer_trigger` + `on_modem_tx_done`):
-- The **only** code path that calls `app_send_frame()` for sensor uplinks
-- Runs on the shared schedule tick
-- Pulls from cache FIFO (`tracker_cache_get(0)` = oldest entry)
-- Sends **confirmed** uplinks — only pops entries when network ACKs
-- **In range (CONFIRMED):** pops entry → 3s chain → fast-drains ALL remaining entries
-- **Out of range (NOT_SENT):** stops immediately — waits for next schedule tick
-- When cache empty: next schedule tick runs the producer for a new scan
+### Watchdogs
 
-**Mutual exclusion:** While the consumer is draining (`cache_drain_active = true`), the producer is blocked. User and turbo scans queue behind the drain — they run automatically once the cache is empty.
+| Watchdog | Side | Trigger | Action |
+|---|---|---|---|
+| **Scan stall** | Producer | Same scan status for 3 alarm ticks | Force-reset to idle |
+| **Drain TX timeout** | Consumer | `cache_drain_active` stays true > 60s | Force-reset `cache_drain_active` |
+| **send_frame failure** | Consumer | `app_send_frame()` returns false | Immediate drain reset, retry next tick |
 
-### Cache Details
+### Drain Chain
 
-| Property | Value |
-|----------|-------|
-| Capacity | 1,000 entries |
-| Entry size | 136 bytes (128 data + 8 metadata) |
-| RAM used | ~136 KB |
-| TTL | None — all entries replayed |
-| Storage at 5-min scan | ~83 hours (~3.5 days) |
-| Storage at 1-min turbo | ~16 hours |
-| Overflow | FIFO — oldest overwritten when full |
-| Drain speed (in range) | 3 seconds between entries (fast burst) |
-| Drain speed (out of range) | One attempt per schedule tick, then stops |
-| Delivery guarantee | Confirmed uplinks — ACK required before pop |
+When in LoRa range:
+1. Consumer timer fires → drain one entry via confirmed uplink
+2. `TXDONE_CONFIRMED` → pop entry → `schedule_consumer(3)` → 3s later drain next
+3. Repeat until cache empty → `schedule_consumer(300)` → wait for next schedule
 
-### Cache Flow: Offline → Online
+When out of range:
+1. TX fails with `NOT_SENT` → `cache_drain_active = false` → `schedule_consumer(300)`
+2. Next schedule tick retries
 
-```mermaid
-sequenceDiagram
-    participant D as Device
-    participant C as Cache
-    participant G as Gateway
+### GPS Scan Timeout
 
-    Note over D,G: === IN RANGE ===
-    D->>C: scan → save entry
-    Note over D: schedule tick → drain
-    D->>G: confirmed TX (entry 1)
-    G-->>D: ACK ✓
-    D->>C: pop entry 1
-    D->>G: confirmed TX (entry 2, 3s chain)
-    G-->>D: ACK ✓
-    D->>C: pop entry 2
-    Note over C: cache empty → drain stops → next tick: scan
-
-    Note over D,G: === OUT OF RANGE ===
-    D->>C: scan → save entry 3
-    Note over D: schedule tick → drain
-    D--xG: confirmed TX (entry 3)
-    Note over D: NOT_SENT → stop
-    D->>C: scan → save entry 4
-    Note over C: entries accumulate
-    Note over D: schedule tick → drain
-    D--xG: confirmed TX (entry 3, retry)
-    Note over D: still NOT_SENT → stop
-
-    Note over D,G: === BACK IN RANGE ===
-    Note over D: schedule tick → drain
-    D->>G: confirmed TX (entry 3, retry)
-    G-->>D: ACK ✓
-    D->>C: pop entry 3
-    D->>G: confirmed TX (entry 4, 3s chain)
-    G-->>D: ACK ✓
-    D->>C: pop entry 4
-    Note over C: cache empty → drain stops → next tick: scan
-```
-
-## Downlink Configuration
-
-Change scan interval by sending a downlink on **FPort 5**:
-
-| Interval | Downlink Hex | Notes |
-|----------|-------------|-------|
-| 2 minutes | `81 00 00 00 02` | Default factory |
-| 5 minutes | `81 00 00 00 05` | |
-| 10 minutes | `81 00 00 00 0A` | |
-| 15 minutes | `81 00 00 00 0F` | |
-| 30 minutes | `81 00 00 00 1E` | |
-| 60 minutes | `81 00 00 00 3C` | |
-
-**Format:** `81 00 00 HH LL`
-- `81` = downlink command: set periodic interval
-- `00 00` = reserved
-- `HH LL` = interval in **minutes**, **big-endian** (memcpyr reversal)
-  - 2 min = `0x0002` → bytes `00 02`
-  - 5 min = `0x0005` → bytes `00 05`
-  - 60 min = `0x003C` → bytes `00 3C`
-
-**How to send** via ChirpStack:
-1. Go to Device → Queue
-2. FPort: `5`
-3. Hex payload: `8100000005` (for 5 minutes)
-4. Click Enqueue
-
-The device applies the new interval on next scan cycle. The change persists across reboots.
-
-## Version Identification
-
-Power-on uplink (FPort 5) ends in `XX c0 de` where XX is the firmware version:
-
-| Version | Power-on payload ending |
-|---------|------------------------|
-| v20 | `...14 c0 de` |
-| v21 | `...15 c0 de` |
-| v22 | `...16 c0 de` |
-| v23 | `...17 c0 de` |
-| v24 | `...18 c0 de` |
-
-All sensor uplinks end in `be ef`.
-
-## Prerequisites to Build
-
-1. **nRF5 SDK 17.1.0** at `C:\nRF5_SDK_17.1.0_ddde560`
-   - Must include SoftDevice s140 7.2.0
-   - Must include the Seeed T1000-E project under `examples/ble_peripheral/t1000-e/`
-   - Must include `modules/nrfx/mdk/gcc_startup_nrf52840.S`
-
-2. **PlatformIO ARM GCC toolchain** at `C:\Users\<user>\.platformio\packages\toolchain-gccarmnoneeabi\`
-   - GCC 12.3.1 (`arm-none-eabi-gcc`)
-   - Install: `pio platform install nordicnrf52`
-
-3. **Python 3** (stdlib only, no extra packages)
-
-4. **uf2conv.py** from [Microsoft UF2 tools](https://github.com/microsoft/uf2) — placed at `C:\Users\<user>\uf2conv.py`
-
-5. **CH340 USB driver** — required for UF2 bootloader mode on Windows
-
-## Source Files
-
-| File | Role |
-|------|------|
-| `apps/examples/11_lorawan_tracker/main_lorawan_tracker.c` | Main firmware: producer/consumer logic, cache drain, TX handlers |
-| `apps/examples/11_lorawan_tracker/main_lorawan_tracker.h` | Header: app_send_frame declaration |
-| `t1000_e/tracker/inc/app_tracker_cache.h` | Cache engine header: ring buffer API, config constants |
-| `t1000_e/tracker/src/app_tracker_cache.c` | Cache engine: ring buffer implementation |
-| `t1000_e/tracker/src/app_lora_packet.c` | Power-on uplink, downlink decode, version byte |
-| `pca10056/11_ses_lorawan_tracker/build_factory.py` | GCC build script (NEW — not in Seeed repo) |
-| `pca10056/t1000_e_dev_kit_pca10056.ld` | GCC linker script (replaces SES's thumb_crt0.s) |
-
-## How to Build
-
-```bash
-cd C:\nRF5_SDK_17.1.0_ddde560\examples\ble_peripheral\t1000-e\pca10056\s140\11_ses_lorawan_tracker
-python3 build_factory.py
-```
-
-Output in `Output/Debug/Exe/`:
-- `t1000_e_dev_kit_pca10056.elf` — compiled firmware
-- `t1000-e-vXX.uf2` — **DO NOT USE** (wrong family ID)
-
-### Creating a Flashable UF2
-
-The build script produces a UF2 with family `0xADA52840` (standard nRF52840). The T1000-E bootloader requires **`0x28860057`**. Fix it:
-
-```bash
-UF2CONV="C:/Users/<user>/uf2conv.py"
-SD_HEX="C:/nRF5_SDK_17.1.0_ddde560/components/softdevice/s140/hex/s140_nrf52_7.2.0_softdevice.hex"
-EXE="Output/Debug/Exe"
-
-# Rebuild SD + App UF2s with T1000-E family
-python3 "$UF2CONV" -f 0x28860057 -b 0x0000 -c -o "$EXE/sd.uf2" "$SD_HEX"
-python3 "$UF2CONV" -f 0x28860057 -b 0x27000 -c -o "$EXE/app.uf2" "$EXE/t1000_e_dev_kit_pca10056.hex"
-
-# Concatenate, strip MBR blocks, fix sequence numbers
-python3 -c "
-import struct
-sd = open('$EXE/sd.uf2','rb').read()
-ap = open('$EXE/app.uf2','rb').read()
-c = sd + ap
-v = [c[b*512:(b+1)*512] for b in range(len(c)//512)
-     if struct.unpack('<I',c[b*512:b*512+4])[0]==0x0A324655
-     and struct.unpack('<I',c[b*512+4:b*512+8])[0]==0x9E5D5157
-     and struct.unpack('<I',c[b*512+12:b*512+16])[0]>=0x1000]
-t = len(v); o = bytearray()
-for i,b in enumerate(v):
-    bb = bytearray(b)
-    struct.pack_into('<II',bb,20,i,t)
-    o.extend(bb)
-open('t1000-e-vXX-cache.uf2','wb').write(o)
-print(f'Done: {len(o)} bytes, {t} blocks')
-"
-```
-
-### Flashing
-
-1. Connect T1000-E via USB-C
-2. Double-press the button rapidly — device enters UF2 bootloader mode (appears as USB drive)
-3. Drag the flashable UF2 onto the drive
-4. Device reboots automatically
+- GNSS scan duration: **45 seconds** (was 30s in v21, for cold-start GPS acquisition)
+- Scan stall watchdog: resets state machine if stuck at any status for 3 consecutive alarm ticks
 
 ## Key Design Decisions
 
-| Decision | Why |
-|----------|-----|
-| **GCC not SES** | SEGGER Embedded Studio can't compile this project (missing startup files, GCC 15 too strict). Use PlatformIO's arm-none-eabi-gcc 12.3.1. |
-| **gcc_startup_nrf52840.S** | SES's `thumb_crt0.s` is SEGGER-specific. nRF5 SDK's GCC startup provides the correct vector table. |
-| **UF2 family 0x28860057** | T1000-E bootloader requires this. Standard nRF52840 family (0xADA52840) is silently rejected. |
-| **No MBR blocks** | UF2 blocks at 0x0-0xFFF cause bootloader rejection. Must strip before flashing. |
-| **Producer/consumer separation** | Producer only calls `tracker_cache_save()`. Consumer is the ONLY path for `app_send_frame()`. No shortcuts. |
-| **Hybrid drain** | In range: fast-drain all entries at 3s intervals. Out of range: one attempt, then stop — wait for next schedule. Same behavior in-range or out-of-range — no special offline mode. |
-| **Mutual exclusion** | Consumer blocks producer via `cache_drain_active`. User/turbo scans queue behind drain. |
-| **Confirmed drain** | Only pop cache entries on CONFIRMED ACK. SENT/NOT_SENT keep entry in cache for next retry. |
-| **GPS epoch in payload** | 4 bytes of GPS epoch time embedded in every v24 payload. Positions retain original timestamps through offline cache replay. |
+1. **Producer never calls `app_send_frame()`** — GPS/sensors only write to cache
+2. **Consumer never calls `tracker_cache_save()`** — LoRa only reads/drains from cache
+3. **`tracker_drain_interval` ≠ `tracker_periodic_interval`** — drain always at 5min, scan varies with turbo
+4. **Turbo always saves** — explicit user action bypasses motion gate
+5. **Confirmed uplinks only** — cache entries popped only on real ACK, not on NOT_SENT
+6. **No mutual exclusion** — producer and consumer run concurrently in `on_modem_alarm()`
+7. **Multiple presses queued** — pressing while scanning queues additional scans
+8. **60s TX watchdog** — if modem never calls TX-done, consumer recovers automatically
 
-## Pitfalls
+## Cache
 
-- **Build cache**: If `FIRMWARE_VERSION` changes but binary doesn't update, delete `Output/Debug/Obj/` and rebuild.
-- **Timer callbacks**: Must have signature `void handler(void *p_context)`, NOT `void handler(void)` — stack corruption otherwise.
-- **Escape sequences**: The patch tool double-escapes `\n` → `\\n` in C string literals. Verify after patching.
-- **UF2 address offset**: The `TargetAddr` field is at byte offset 12 in the UF2 block header, not 8 (which is `Flags`).
-- **memcpyr reversal**: All multi-byte fields in downlinks use `memcpyr` (big-endian reversal). `0x0005` → bytes `00 05` not `05 00`.
+- Ring buffer, 200 entries maximum
+- 4-hour TTL (entries older than 4 hours are expired)
+- Concurrent read/write safe — producer appends at write pointer, consumer reads at read pointer
+- All entries are confirmed uplinks — only popped on `TXDONE_CONFIRMED`
+
+## Build
+
+Requires nRF5 SDK 17.1.0 and ARM GCC toolchain.
+
+```bash
+cd examples/ble_peripheral/t1000-e/pca10056/s140/11_ses_lorawan_tracker
+python3 build_factory.py
+```
+
+Build script compiles 180 files using `generic_gcc_nrf52.ld` from the nRF5 SDK.
+
+See `UF2_BUILD_RECIPE.md` for full UF2 assembly steps.
 
 ## License
 
-The cache engine (`app_tracker_cache.h/.c`), build script (`build_factory.py`), and all modifications to Seeed's firmware are copyright (C) 2026 ViVSoft Computers LLC and licensed under the [GNU Affero General Public License v3.0](LICENSE).
-
-The original Seeed tracker firmware is [MIT licensed](README-Seeed.md). The LoRa Basics Modem is [Clear BSD](lora_basics_modem/LICENSE) licensed by Semtech. The nRF5 SDK and SoftDevice are licensed by Nordic Semiconductor.
+AGPL-3.0 — see [LICENSE](LICENSE)
