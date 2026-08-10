@@ -962,33 +962,13 @@ static void app_tracker_scan_result_send( void )
 
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xBE;
         tracker_scan_data_temp[tracker_scan_temp_len++] = 0xEF;
-
-        /* v23: motion gate — only cache + send if moved ≥25m, user triggered, or hourly heartbeat */
-        /* Heartbeat: force a save if it's been ≥1 hour since last successful TX */
-        bool heartbeat = ( last_tx_time > 0 && ( hal_rtc_get_time_s( ) - last_tx_time ) >= 3600 );
-        if ( moved || event_state == TRACKER_STATE_BIT8_USER || turbo_active || heartbeat )
-        {
-            tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
-            send_ok = true;
-            last_tx_time = hal_rtc_get_time_s( );
-            /* Heartbeat resets position baseline so next scan doesn't fire twice */
-            if ( heartbeat && !moved )
-            {
-                memcpyr( ( uint8_t *)( &last_lon ), tracker_gps_scan_data, 4 );
-                memcpyr( ( uint8_t *)( &last_lat ), tracker_gps_scan_data + 4, 4 );
-            }
-        }
-        else
-        {
-            /* Motion gate blocked this scan — restart the periodic alarm so
-             * the next scan fires on schedule. Without this, the alarm system
-             * stalls because on_modem_tx_done() is never called.
-             * Also decrement scan_result_num and clear GPS data so stale
-             * buffers don't get re-processed on the next cycle. */
-            schedule_consumer( tracker_drain_interval );
-            if( tracker_gps_scan_len ) scan_result_num -= 1;
-            tracker_gps_scan_len = 0;
-        }
+        /* v25: Always cache every scan result.
+         * Producer/consumer architecture ensures drain happens on its own schedule,
+         * so saving every scan doesn't waste airtime — entries accumulate in cache
+         * and drain in bursts. GPS scan (the expensive part) already happened. */
+        tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
+        send_ok = true;
+        last_tx_time = hal_rtc_get_time_s( );
         if( send_ok ) tracker_gps_scan_len = 0;
     }
     else if( tracker_wifi_scan_len )
