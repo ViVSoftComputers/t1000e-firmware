@@ -577,10 +577,9 @@ static void on_modem_network_joined( void )
 
 static void on_modem_alarm( void )
 {
-    /* User-triggered scan takes priority over drain.
-     * Only drain if no user event is pending and cache has entries. */
-    if( tracker_cache_count( ) > 0 && !cache_drain_active 
-        && event_state != TRACKER_STATE_BIT8_USER )
+    /* Drain always takes priority over publisher.
+     * If cache has entries and drain not active, trigger consumer. */
+    if( tracker_cache_count( ) > 0 && !cache_drain_active )
     {
         cache_consumer_trigger( );
     }
