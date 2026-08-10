@@ -1090,7 +1090,7 @@ static void app_tracker_scan_process( void )
         }
         else if( tracker_scan_status == 1 )
         {
-            next_delay = tracker_periodic_interval - gnss_scan_duration;
+            if ( event_state == TRACKER_STATE_BIT8_USER || turbo_active ) { next_delay = 1; } else { next_delay = tracker_periodic_interval - gnss_scan_duration; }
             smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_gnss_scan_end( );
@@ -1168,7 +1168,7 @@ static void app_tracker_scan_process( void )
             app_tracker_gnss_scan_end( );
             if( scan_result )
             {
-                next_delay = tracker_periodic_interval - gnss_scan_duration;
+                if ( event_state == TRACKER_STATE_BIT8_USER || turbo_active ) { next_delay = 1; } else { next_delay = tracker_periodic_interval - gnss_scan_duration; }
                 smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
                 HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
                 tracker_scan_status = 0xff;
