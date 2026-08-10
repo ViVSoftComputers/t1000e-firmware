@@ -839,7 +839,6 @@ static void app_tracker_scan_result_send( void )
 
         tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
         send_ok = true;
-        cache_consumer_trigger( );
     }
     else if( tracker_gps_scan_len )
     {
@@ -913,7 +912,6 @@ static void app_tracker_scan_result_send( void )
         {
             tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
             send_ok = true;
-            cache_consumer_trigger( );
             last_tx_time = hal_rtc_get_time_s( );
             /* Heartbeat resets position baseline so next scan doesn't fire twice */
             if ( heartbeat && !moved )
@@ -971,7 +969,6 @@ static void app_tracker_scan_result_send( void )
 
         tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
         send_ok = true;
-        cache_consumer_trigger( );
         if( send_ok ) tracker_wifi_scan_len = 0;
     }
     else if( tracker_ble_scan_len )
@@ -1010,7 +1007,6 @@ static void app_tracker_scan_result_send( void )
 
         tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
         send_ok = true;
-        cache_consumer_trigger( );
         if( send_ok ) tracker_ble_scan_len = 0;
     }
 
