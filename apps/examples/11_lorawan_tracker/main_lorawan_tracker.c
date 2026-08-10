@@ -87,6 +87,7 @@ uint32_t gnss_scan_duration = 45;            // in second
 uint32_t wifi_scan_duration = 3;            // in second
 uint32_t ble_scan_duration = 3;             // in second
 uint32_t tracker_periodic_interval = 60;    // in minute
+uint32_t tracker_drain_interval = 300;   /* consumer drains every 5 min, independent of scan */
 
 /* Turbo mode — double-press toggles 30-second scan interval */
 static bool     turbo_active = false;
@@ -629,7 +630,7 @@ static void on_modem_alarm( void )
         else
         {
             /* Nothing to drain — check again next schedule */
-            schedule_consumer( tracker_periodic_interval );
+            schedule_consumer( tracker_drain_interval );
         }
     }
 
@@ -674,7 +675,7 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
                 hal_beep_off( );
                 hal_pwm_deinit( );
             }
-            schedule_consumer( tracker_periodic_interval );
+            schedule_consumer( tracker_drain_interval );
         }
     }
     else
@@ -683,7 +684,7 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         cache_drain_active = false;
         if( tracker_cache_count( ) == 0 )
         {
-            schedule_consumer( tracker_periodic_interval );
+            schedule_consumer( tracker_drain_interval );
         }
     }
 }
@@ -970,7 +971,7 @@ static void app_tracker_scan_result_send( void )
              * stalls because on_modem_tx_done() is never called.
              * Also decrement scan_result_num and clear GPS data so stale
              * buffers don't get re-processed on the next cycle. */
-            schedule_consumer( tracker_periodic_interval );
+            schedule_consumer( tracker_drain_interval );
             if( tracker_gps_scan_len ) scan_result_num -= 1;
             tracker_gps_scan_len = 0;
         }
