@@ -664,8 +664,7 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         }
         else
         {
-            /* Cache empty — if user event is queued, scan immediately.
-             * If force-drain was requested, beep completion. */
+            /* Cache empty — if force-drain was requested, beep completion. */
             if( force_drain_pending )
             {
                 force_drain_pending = false;
@@ -675,20 +674,14 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
                 hal_beep_off( );
                 hal_pwm_deinit( );
             }
-            schedule_producer( 
-                event_state == TRACKER_STATE_BIT8_USER ? 1 : tracker_periodic_interval );
+            schedule_consumer( tracker_periodic_interval );
         }
     }
     else
     {
-        /* Out of range (SENT/NOT_SENT) — stop, retry next schedule.
-         * If cache is empty AND user event queued, scan immediately. */
+        /* Out of range (SENT/NOT_SENT) — stop, retry next schedule. */
         cache_drain_active = false;
-        if( tracker_cache_count( ) == 0 && event_state == TRACKER_STATE_BIT8_USER )
-        {
-            schedule_producer( 1 );
-        }
-        else
+        if( tracker_cache_count( ) == 0 )
         {
             schedule_consumer( tracker_periodic_interval );
         }
