@@ -616,18 +616,32 @@ static void on_modem_network_joined( void )
 
 static void on_modem_alarm( void )
 {
-    /* Drain always takes priority over publisher.
-     * If cache has entries and drain not active, trigger consumer. */
-    if( tracker_cache_count( ) > 0 && !cache_drain_active )
+    uint32_t now = hal_rtc_get_time_s( );
+
+    /* Consumer: drain if its timer expired AND cache has entries */
+    if( now >= consumer_next_s )
     {
-        cache_consumer_trigger( );
+        if( tracker_cache_count( ) > 0 && !cache_drain_active )
+        {
+            cache_consumer_trigger( );
+            /* drain chain will call schedule_consumer() for next consumer tick */
+        }
+        else
+        {
+            /* Nothing to drain — check again next schedule */
+            schedule_consumer( tracker_periodic_interval );
+        }
     }
 
-    /* Always run the normal scan — drain retries coexist with scans */
-    smtc_modem_status_mask_t modem_status;
-    ASSERT_SMTC_MODEM_RC( smtc_modem_get_status( stack_id, &modem_status ));
-    modem_status_to_string( modem_status );
-    if( !cache_drain_active ) app_tracker_scan_process( );
+    /* Producer: scan if its timer expired */
+    if( now >= producer_next_s )
+    {
+        app_tracker_scan_process( );
+        /* scan process calls schedule_producer() for next producer tick */
+    }
+
+    /* Always re-arm alarm to the sooner of the two timers */
+    sync_alarm( );
 }
 
 
@@ -1105,13 +1119,8 @@ static void app_tracker_scan_result_send( void )
             hal_pwm_deinit( );
         }
 
-        /* Drain chain handles alarm when cache has entries.
-         * Otherwise schedule next periodic scan. */
-        if( tracker_cache_count( ) > 0 )
-        {
-            schedule_producer( 1 );  /* kick drain via sync_alarm() */
-        }
-        else
+        /* Producer schedules its own next scan — never kicks consumer.
+         * Consumer drains on its own independent timer. */
         {
             int32_t next_delay = tracker_periodic_interval - ( hal_rtc_get_time_s( ) - tracker_scan_begin );
             schedule_producer( next_delay > 0 ? next_delay : 1 );
