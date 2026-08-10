@@ -125,6 +125,7 @@ static bool cache_drain_active = false;
 int8_t scan_result_num = 0;
 
 uint8_t event_state = 0;
+static uint8_t user_press_pending = 0;  /* queued presses during scan */
 
 /*
  * -----------------------------------------------------------------------------
@@ -1037,6 +1038,12 @@ static void app_tracker_scan_result_send( void )
                 hal_pwm_deinit( );
             }
         event_state = 0;  /* user event consumed */
+        /* If another press was queued during this scan, process it */
+        if( user_press_pending > 0 )
+        {
+            user_press_pending -= 1;
+            event_state = TRACKER_STATE_BIT8_USER;
+        }
         }
         else if ( turbo_active )
         {
@@ -1382,6 +1389,12 @@ bool app_send_frame( const uint8_t* buffer, const uint8_t length, bool tx_confir
 
 void app_tracker_new_run( uint8_t event )
 {
+    /* If a scan is already running, queue this press and return. */
+    if( tracker_scan_status != 0 )
+    {
+        user_press_pending += 1;
+        return;
+    }
     event_state = event;
     if( tracker_scan_status == 0 ) // Not tracking — start new scan immediately
     {
