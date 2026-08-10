@@ -79,10 +79,11 @@ static uint8_t adr_custom_list_ru864_default[16] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 
 
 static uint8_t tracker_scan_status = 0;
 static uint32_t tracker_scan_begin = 0;
+static uint8_t scan_stall_count = 0;       /* watchdog: resets stuck scan state */
 
 uint8_t tracker_scan_type = 0;
 
-uint32_t gnss_scan_duration = 30;            // in second
+uint32_t gnss_scan_duration = 45;            // in second
 uint32_t wifi_scan_duration = 3;            // in second
 uint32_t ble_scan_duration = 3;             // in second
 uint32_t tracker_periodic_interval = 60;    // in minute
@@ -1056,6 +1057,24 @@ static void app_tracker_scan_result_send( void )
 static void app_tracker_scan_process( void )
 {
     int32_t next_delay = 0;
+    static uint8_t last_status = 0xFF;  /* watchdog: detect stuck state */
+
+    /* Scan stall watchdog: if status hasn't changed for 3 alarm ticks,
+     * force-reset to idle. Prevents GNSS/driver hangs from freezing device. */
+    if( tracker_scan_status == last_status )
+    {
+        if( ++scan_stall_count >= 3 )
+        {
+            tracker_scan_status = 0;
+            scan_stall_count = 0;
+            scan_result_num = 0;
+        }
+    }
+    else
+    {
+        scan_stall_count = 0;
+    }
+    last_status = tracker_scan_status;
 
     scan_result = false;
 
