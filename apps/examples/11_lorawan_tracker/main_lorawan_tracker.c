@@ -181,16 +181,21 @@ static void on_modem_alarm( void );
  *
  * @param [in] status tx done status @ref smtc_modem_event_txdone_status_t
  */
+static void on_modem_tx_done( smtc_modem_event_txdone_status_t status );
+
 /* ---- Independent timer wrappers ---- */
 
+static void sync_alarm( void );
 static void schedule_producer( uint32_t delay_s )
 {
     producer_next_s = hal_rtc_get_time_s( ) + delay_s;
+    sync_alarm( );
 }
 
 static void schedule_consumer( uint32_t delay_s )
 {
     consumer_next_s = hal_rtc_get_time_s( ) + delay_s;
+    sync_alarm( );
 }
 
 static void sync_alarm( void )
@@ -205,10 +210,9 @@ static void sync_alarm( void )
     else if( cd == 0 )               next = pd;
     else                             next = ( pd < cd ) ? pd : cd;
 
-    schedule_producer( next > 0 ? next : 1 );
+    smtc_modem_alarm_start_timer( next > 0 ? next : 1 );
 }
 
-static void on_modem_tx_done( smtc_modem_event_txdone_status_t status );
 
 static void cache_consumer_trigger( void );
 
@@ -625,6 +629,7 @@ static void on_modem_alarm( void )
     modem_status_to_string( modem_status );
     if( !cache_drain_active ) app_tracker_scan_process( );
 }
+
 
 /* ---- Independent timer wrappers ---- */
 
