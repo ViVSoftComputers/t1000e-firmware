@@ -1,10 +1,10 @@
-# T1000-E Tracker Firmware — v24 Independent Producer/Consumer Edition
+# T1000-E Tracker Firmware — v25 Independent Producer/Consumer Edition
 
-Built: 2026-08-10  
+Built: 2026-08-10 (v25)  
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + LR1110)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v24 is a complete architectural rewrite.** Producer and consumer are fully independent — each has its own timer, own schedule, own watchdog. They share nothing except the ring buffer cache. Producer only touches GPS/sensors and writes to cache. Consumer only touches the LoRa radio and reads from cache. Neither blocks the other.
+> **v25 is a complete architectural rewrite.** Producer and consumer are fully independent — each has its own timer, own schedule, own watchdog. They share nothing except the ring buffer cache. Producer only touches GPS/sensors and writes to cache. Consumer only touches the LoRa radio and reads from cache. Neither blocks the other.
 
 ## 📖 Read the Full Article
 
@@ -24,10 +24,10 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## Flash
 
 1. Double-press the button to enter UF2 bootloader
-2. Drag `t1000-e-v24.uf2` onto the USB drive
+2. Drag `t1000-e-v25.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
-## v24 Button Behavior
+## v25 Button Behavior
 
 | Press | Action | Beep Feedback |
 |-------|--------|---------------|
@@ -68,7 +68,7 @@ When GPS fix is available: positions < 25m from last saved position are skipped 
 - WiFi-only and BLE-only scans (no GPS data to compare)
 - 1-hour heartbeat (keeps map alive, proves device is working)
 
-## Architecture (v24)
+## Architecture (v25)
 
 ### Core Principle: Complete Separation
 
