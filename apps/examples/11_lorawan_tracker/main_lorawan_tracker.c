@@ -587,7 +587,7 @@ static void on_modem_alarm( void )
     smtc_modem_status_mask_t modem_status;
     ASSERT_SMTC_MODEM_RC( smtc_modem_get_status( stack_id, &modem_status ));
     modem_status_to_string( modem_status );
-    app_tracker_scan_process( );
+    if( !cache_drain_active ) app_tracker_scan_process( );
 }
 
 static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
