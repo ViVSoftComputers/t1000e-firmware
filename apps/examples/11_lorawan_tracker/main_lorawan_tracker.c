@@ -123,6 +123,7 @@ uint8_t tracker_scan_data_temp[64] = { 0 };
 
 bool scan_result = false;
 static bool cache_drain_active = false;
+static uint32_t drain_start_time_s = 0;    /* TX timeout watchdog */
 static bool force_drain_pending = false;    /* completion beep after force-drain */
 int8_t scan_result_num = 0;
 
@@ -627,10 +628,22 @@ static void on_modem_alarm( void )
             cache_consumer_trigger( );
             /* drain chain will call schedule_consumer() for next consumer tick */
         }
-        else
+        else if( tracker_cache_count( ) == 0 )
         {
             /* Nothing to drain — check again next schedule */
             schedule_consumer( tracker_drain_interval );
+        }
+        else
+        {
+            /* Cache has entries but drain is still in progress.
+             * Check again soon — avoids spinning on every alarm tick.
+             * Watchdog: if TX hasn't completed in 60s, force-reset. */
+            uint32_t drain_elapsed = now - drain_start_time_s;
+            if( drain_elapsed > 60 )
+            {
+                cache_drain_active = false;  /* force timeout */
+            }
+            schedule_consumer( 3 );
         }
     }
 
@@ -700,6 +713,7 @@ static void cache_consumer_trigger( void )
         if( entry && entry_len > 0 )
         {
             cache_drain_active = true;
+            drain_start_time_s = hal_rtc_get_time_s( );  /* watchdog */
             /* Use CONFIRMED — only pop on real ACK */
             if( !app_send_frame( entry, entry_len, true, false ) )
             {
