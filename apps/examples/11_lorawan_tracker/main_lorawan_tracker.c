@@ -577,8 +577,10 @@ static void on_modem_network_joined( void )
 
 static void on_modem_alarm( void )
 {
-    /* Try to drain cache if entries exist and drain not active */
-    if( tracker_cache_count( ) > 0 && !cache_drain_active )
+    /* User-triggered scan takes priority over drain.
+     * Only drain if no user event is pending and cache has entries. */
+    if( tracker_cache_count( ) > 0 && !cache_drain_active 
+        && event_state != TRACKER_STATE_BIT8_USER )
     {
         cache_consumer_trigger( );
     }
@@ -1051,6 +1053,7 @@ static void app_tracker_scan_result_send( void )
                 }
                 hal_pwm_deinit( );
             }
+        event_state = 0;  /* user event consumed */
         }
         else if ( turbo_active )
         {
