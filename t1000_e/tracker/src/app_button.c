@@ -124,6 +124,13 @@ void app_user_button_event_timeout_handler( void *p_context )
                  * (app_tracker_scan_result_send) — 3 beeps for GPS fix,
                  * 5 beeps for no fix. */
                 app_tracker_new_run( TRACKER_STATE_BIT8_USER );
+
+                /* Short ack beep — button press confirmed */
+                hal_pwm_init( 2000 );
+                hal_beep_on( );
+                hal_mcu_wait_ms( 40 );
+                hal_beep_off( );
+                hal_pwm_deinit( );
                 PRINTF( "\r\nUSER_SCAN\r\n\r\n" );
             }
             break;
@@ -147,7 +154,7 @@ void app_user_button_event_timeout_handler( void *p_context )
                 app_tracker_turbo_toggle( );
                 if ( app_tracker_is_turbo( ) )
                 {
-                    /* Entered turbo — confirm with short beep */
+                    /* Entered turbo — long beep confirm */
                     hal_pwm_init( 2000 );
                     hal_beep_on( );
                     hal_mcu_wait_ms( 500 );
@@ -156,7 +163,7 @@ void app_user_button_event_timeout_handler( void *p_context )
                 }
                 else
                 {
-                    /* Exited turbo — confirm with short beep */
+                    /* Exited turbo — long beep confirm */
                     hal_pwm_init( 2000 );
                     hal_beep_on( );
                     hal_mcu_wait_ms( 500 );
