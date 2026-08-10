@@ -905,7 +905,7 @@ static void app_tracker_scan_result_send( void )
         /* v23: motion gate — only cache + send if moved ≥25m, user triggered, or hourly heartbeat */
         /* Heartbeat: force a save if it's been ≥1 hour since last successful TX */
         bool heartbeat = ( last_tx_time > 0 && ( hal_rtc_get_time_s( ) - last_tx_time ) >= 3600 );
-        if ( moved || event_state == TRACKER_STATE_BIT8_USER || heartbeat )
+        if ( moved || event_state == TRACKER_STATE_BIT8_USER || turbo_active || heartbeat )
         {
             tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
             send_ok = true;

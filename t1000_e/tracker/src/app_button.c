@@ -242,12 +242,7 @@ void app_user_button_event_timeout_handler( void *p_context )
 
                 app_tracker_force_drain( );
 
-                /* Long beep: drain complete */
-                hal_pwm_init( 2000 );
-                hal_beep_on( );
-                hal_mcu_wait_ms( 500 );
-                hal_beep_off( );
-                hal_pwm_deinit( );
+                /* Completion beep fires in on_modem_tx_done when cache empties */
             }
             break;
 
