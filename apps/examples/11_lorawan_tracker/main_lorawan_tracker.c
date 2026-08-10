@@ -967,7 +967,7 @@ static void app_tracker_scan_result_send( void )
          * - User/turbo: always save
          * - Stationary ≤5 min: gate blocks — cache conserved
          * - Stationary >5 min: one save, timer resets */
-        bool heartbeat = ( last_tx_time > 0 && ( hal_rtc_get_time_s( ) - last_tx_time ) >= 300 );
+        bool heartbeat = ( last_tx_time > 0 && ( hal_rtc_get_time_s( ) - last_tx_time ) >= tracker_periodic_interval );
         if ( moved || event_state == TRACKER_STATE_BIT8_USER || turbo_active || heartbeat )
         {
             tracker_cache_save( tracker_scan_data_temp, tracker_scan_temp_len );
