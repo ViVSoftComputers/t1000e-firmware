@@ -1459,13 +1459,6 @@ void app_tracker_new_run( uint8_t event )
     event_state = event;
     if( tracker_scan_status == 0 ) // Not tracking — start new scan immediately
     {
-        /* Don't interrupt an active drain. The drain chain will restart
-         * the scan when the cache empties. Event stays queued. */
-                if( cache_drain_active )
-        {
-            /* User pressed during drain - queued for next cycle */
-            return;
-        }
         smtc_modem_status_mask_t modem_status;
         smtc_modem_get_status( 0, &modem_status );
         if(( modem_status & SMTC_MODEM_STATUS_JOINED ) == SMTC_MODEM_STATUS_JOINED )
