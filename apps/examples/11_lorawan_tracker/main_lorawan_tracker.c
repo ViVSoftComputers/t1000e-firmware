@@ -597,14 +597,27 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
     static uint32_t uplink_count = 0;
     HAL_DBG_TRACE_INFO( "Uplink count: %d\n", ++uplink_count );
 
-    /* Drain runs only on schedule — no fast chaining.
-     * Pop on CONFIRMED, retry on next alarm tick otherwise. */
     if( status == SMTC_MODEM_EVENT_TXDONE_CONFIRMED )
     {
+        /* In range — fast drain remaining entries */
         tracker_cache_pop( );
+        cache_drain_active = false;
+
+        if( tracker_cache_count( ) > 0 )
+        {
+            smtc_modem_alarm_start_timer( 3 );  /* fast drain next in 3s */
+        }
+        else
+        {
+            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+        }
     }
-    cache_drain_active = false;
-    /* No alarm set — on_modem_alarm() handles all scheduling */
+    else
+    {
+        /* Out of range (SENT/NOT_SENT) — stop, retry next schedule */
+        cache_drain_active = false;
+        smtc_modem_alarm_start_timer( tracker_periodic_interval );
+    }
 }
 
 /* Trigger cache consumer: start drain if not active */
