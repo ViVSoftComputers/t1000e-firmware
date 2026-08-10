@@ -597,57 +597,14 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
     static uint32_t uplink_count = 0;
     HAL_DBG_TRACE_INFO( "Uplink count: %d\n", ++uplink_count );
 
-    /* ---- Cache consumer: timer-based drain ---- */
+    /* Drain runs only on schedule — no fast chaining.
+     * Pop on CONFIRMED, retry on next alarm tick otherwise. */
     if( status == SMTC_MODEM_EVENT_TXDONE_CONFIRMED )
     {
-        /* ACK received — pop and schedule next drain */
         tracker_cache_pop( );
-        cache_drain_active = false;
-
-        if( tracker_cache_count( ) > 0 )
-        {
-            smtc_modem_alarm_start_timer( 3 );  /* drain next in 3s */
-        }
-        else
-        {
-            smtc_modem_alarm_start_timer( tracker_periodic_interval );
-        }
     }
-    else if( status == SMTC_MODEM_EVENT_TXDONE_SENT )
-    {
-        /* Transmitted but no ACK — DON'T pop, retry at scan interval */
-        cache_drain_active = false;
-        if( tracker_cache_count( ) > 0 )
-        {
-            smtc_modem_alarm_start_timer( tracker_periodic_interval );
-        }
-        else
-        {
-            smtc_modem_alarm_start_timer( tracker_periodic_interval );
-        }
-    }
-    else if( status == SMTC_MODEM_EVENT_TXDONE_NOT_SENT )
-    {
-        /* Blocked — retry at scan interval */
-        cache_drain_active = false;
-        if( tracker_cache_count( ) > 0 )
-        {
-            smtc_modem_alarm_start_timer( tracker_periodic_interval );
-        }
-        else
-        {
-            smtc_modem_alarm_start_timer( tracker_periodic_interval );
-        }
-    }
-
-    if( status == SMTC_MODEM_EVENT_TXDONE_CONFIRMED )
-    {
-        if( event_state == TRACKER_STATE_BIT8_USER )
-        {
-            /* beep moved to app_tracker_scan_result_send — fires at scan time, not TX time */
-            event_state = 0;  /* cleared AFTER user beep, not on every TX */
-        }
-    }
+    cache_drain_active = false;
+    /* No alarm set — on_modem_alarm() handles all scheduling */
 }
 
 /* Trigger cache consumer: start drain if not active */
