@@ -125,6 +125,11 @@ static bool cache_drain_active = false;
 static bool force_drain_pending = false;    /* completion beep after force-drain */
 int8_t scan_result_num = 0;
 
+/* Independent timers for producer and consumer.
+ * Each side schedules its own next tick. on_modem_alarm() picks the sooner. */
+static uint32_t producer_next_s = 0;  /* absolute RTC seconds */
+static uint32_t consumer_next_s = 0;  /* absolute RTC seconds */
+
 uint8_t event_state = 0;
 static uint8_t user_press_pending = 0;  /* queued presses during scan */
 
@@ -176,6 +181,33 @@ static void on_modem_alarm( void );
  *
  * @param [in] status tx done status @ref smtc_modem_event_txdone_status_t
  */
+/* ---- Independent timer wrappers ---- */
+
+static void schedule_producer( uint32_t delay_s )
+{
+    producer_next_s = hal_rtc_get_time_s( ) + delay_s;
+}
+
+static void schedule_consumer( uint32_t delay_s )
+{
+    consumer_next_s = hal_rtc_get_time_s( ) + delay_s;
+}
+
+static void sync_alarm( void )
+{
+    uint32_t now = hal_rtc_get_time_s( );
+    uint32_t pd = ( producer_next_s > now ) ? ( producer_next_s - now ) : 0;
+    uint32_t cd = ( consumer_next_s > now ) ? ( consumer_next_s - now ) : 0;
+
+    uint32_t next;
+    if( pd == 0 && cd == 0 )         next = 1;
+    else if( pd == 0 )               next = cd;
+    else if( cd == 0 )               next = pd;
+    else                             next = ( pd < cd ) ? pd : cd;
+
+    schedule_producer( next > 0 ? next : 1 );
+}
+
 static void on_modem_tx_done( smtc_modem_event_txdone_status_t status );
 
 static void cache_consumer_trigger( void );
@@ -575,7 +607,7 @@ static void on_modem_network_joined( void )
 
     app_lora_packet_power_on_uplink( );
 
-    ASSERT_SMTC_MODEM_RC( smtc_modem_alarm_start_timer( 15 ) );
+    schedule_producer( 15 );
 }
 
 static void on_modem_alarm( void )
@@ -594,6 +626,8 @@ static void on_modem_alarm( void )
     if( !cache_drain_active ) app_tracker_scan_process( );
 }
 
+/* ---- Independent timer wrappers ---- */
+
 static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
 {
     static uint32_t uplink_count = 0;
@@ -607,7 +641,7 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
 
         if( tracker_cache_count( ) > 0 )
         {
-            smtc_modem_alarm_start_timer( 3 );  /* fast drain next in 3s */
+            schedule_consumer( 3 );
         }
         else
         {
@@ -622,7 +656,7 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
                 hal_beep_off( );
                 hal_pwm_deinit( );
             }
-            smtc_modem_alarm_start_timer( 
+            schedule_producer( 
                 event_state == TRACKER_STATE_BIT8_USER ? 1 : tracker_periodic_interval );
         }
     }
@@ -633,11 +667,11 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         cache_drain_active = false;
         if( tracker_cache_count( ) == 0 && event_state == TRACKER_STATE_BIT8_USER )
         {
-            smtc_modem_alarm_start_timer( 1 );
+            schedule_producer( 1 );
         }
         else
         {
-            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+            schedule_consumer( tracker_periodic_interval );
         }
     }
 }
@@ -924,7 +958,7 @@ static void app_tracker_scan_result_send( void )
              * stalls because on_modem_tx_done() is never called.
              * Also decrement scan_result_num and clear GPS data so stale
              * buffers don't get re-processed on the next cycle. */
-            smtc_modem_alarm_start_timer( tracker_periodic_interval );
+            schedule_consumer( tracker_periodic_interval );
             if( tracker_gps_scan_len ) scan_result_num -= 1;
             tracker_gps_scan_len = 0;
         }
@@ -1010,7 +1044,7 @@ static void app_tracker_scan_result_send( void )
     if( send_ok ) scan_result_num -= 1;
     if( scan_result_num )
     {
-        smtc_modem_alarm_start_timer( LORWAN_SEND_INTERVAL_MIN );
+        schedule_producer( LORWAN_SEND_INTERVAL_MIN );
         HAL_DBG_TRACE_PRINTF( "next send, new alarm %d s\n\n", LORWAN_SEND_INTERVAL_MIN );
     }
     else
@@ -1066,9 +1100,17 @@ static void app_tracker_scan_result_send( void )
             hal_pwm_deinit( );
         }
 
-        int32_t next_delay = tracker_periodic_interval - ( hal_rtc_get_time_s( ) - tracker_scan_begin );
-        smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
-        HAL_DBG_TRACE_PRINTF( "send end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
+        /* Drain chain handles alarm when cache has entries.
+         * Otherwise schedule next periodic scan. */
+        if( tracker_cache_count( ) > 0 )
+        {
+            schedule_producer( 1 );  /* kick drain via sync_alarm() */
+        }
+        else
+        {
+            int32_t next_delay = tracker_periodic_interval - ( hal_rtc_get_time_s( ) - tracker_scan_begin );
+            schedule_producer( next_delay > 0 ? next_delay : 1 );
+        }
     }
 }
 
@@ -1100,7 +1142,7 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            smtc_modem_alarm_start_timer( gnss_scan_duration );
+            schedule_producer( gnss_scan_duration );
             HAL_DBG_TRACE_PRINTF( "gnss begin, new alarm %d s\n\n", gnss_scan_duration );
             tracker_scan_begin = hal_rtc_get_time_s( );
             app_tracker_gnss_scan_begin( );
@@ -1109,7 +1151,7 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 1 )
         {
             if ( event_state == TRACKER_STATE_BIT8_USER || turbo_active ) { next_delay = 1; } else { next_delay = tracker_periodic_interval - gnss_scan_duration; }
-            smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+            schedule_producer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_gnss_scan_end( );
             tracker_scan_status = 0xff;
@@ -1119,7 +1161,7 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            smtc_modem_alarm_start_timer( wifi_scan_duration );
+            schedule_producer( wifi_scan_duration );
             HAL_DBG_TRACE_PRINTF( "wifi begin, new alarm %d s\n\n", wifi_scan_duration );
             tracker_scan_begin = hal_rtc_get_time_s( );
             app_tracker_wifi_scan_begin( );
@@ -1128,7 +1170,7 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 1 )
         {
             next_delay = tracker_periodic_interval - wifi_scan_duration;
-            smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+            schedule_producer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "wifi end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_wifi_scan_end( );
             tracker_scan_status = 0xff;
@@ -1138,7 +1180,7 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            smtc_modem_alarm_start_timer( wifi_scan_duration );
+            schedule_producer( wifi_scan_duration );
             HAL_DBG_TRACE_PRINTF( "wifi begin, new alarm %d s\n\n", wifi_scan_duration );
             tracker_scan_begin = hal_rtc_get_time_s( );
             app_tracker_wifi_scan_begin( );
@@ -1150,13 +1192,13 @@ static void app_tracker_scan_process( void )
             if( scan_result )
             {
                 next_delay = tracker_periodic_interval - wifi_scan_duration;
-                smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+                schedule_producer( next_delay > 0 ? next_delay : 1 );
                 HAL_DBG_TRACE_PRINTF( "wifi end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
                 tracker_scan_status = 0xff;
             }
             else
             {
-                smtc_modem_alarm_start_timer( gnss_scan_duration );
+                schedule_producer( gnss_scan_duration );
                 HAL_DBG_TRACE_PRINTF( "wifi end\r\ngnss begin, new alarm %d s\n\n", gnss_scan_duration );
                 tracker_scan_status = 2;
                 app_tracker_gnss_scan_begin( );
@@ -1165,7 +1207,7 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 2 )
         {
             next_delay = tracker_periodic_interval - wifi_scan_duration - gnss_scan_duration;
-            smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+            schedule_producer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_gnss_scan_end( );
             tracker_scan_status = 0xff;
@@ -1175,7 +1217,7 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            smtc_modem_alarm_start_timer( gnss_scan_duration );
+            schedule_producer( gnss_scan_duration );
             HAL_DBG_TRACE_PRINTF( "gnss begin, new alarm %d s\n\n", gnss_scan_duration );
             tracker_scan_begin = hal_rtc_get_time_s( );
             app_tracker_gnss_scan_begin( );
@@ -1187,13 +1229,13 @@ static void app_tracker_scan_process( void )
             if( scan_result )
             {
                 if ( event_state == TRACKER_STATE_BIT8_USER || turbo_active ) { next_delay = 1; } else { next_delay = tracker_periodic_interval - gnss_scan_duration; }
-                smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+                schedule_producer( next_delay > 0 ? next_delay : 1 );
                 HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
                 tracker_scan_status = 0xff;
             }
             else
             {
-                smtc_modem_alarm_start_timer( wifi_scan_duration );
+                schedule_producer( wifi_scan_duration );
                 HAL_DBG_TRACE_PRINTF( "gnss end\r\nwifi begin, new alarm %d s\n\n", wifi_scan_duration );
                 app_tracker_wifi_scan_begin( );
                 tracker_scan_status = 2;
@@ -1202,7 +1244,7 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 2 )
         {
             next_delay = tracker_periodic_interval - gnss_scan_duration - wifi_scan_duration;
-            smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+            schedule_producer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "wifi end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_wifi_scan_end( );
             tracker_scan_status = 0xff;
@@ -1212,7 +1254,7 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            smtc_modem_alarm_start_timer( ble_scan_duration );
+            schedule_producer( ble_scan_duration );
             HAL_DBG_TRACE_PRINTF( "ble begin, new alarm %d s\n\n", ble_scan_duration );
             tracker_scan_begin = hal_rtc_get_time_s( );
             app_tracker_ble_scan_begin( );
@@ -1221,7 +1263,7 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 1 )
         {
             next_delay = tracker_periodic_interval - ble_scan_duration;
-            smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+            schedule_producer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "ble end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_ble_scan_end( );
             tracker_scan_status = 0xff;
@@ -1231,7 +1273,7 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            smtc_modem_alarm_start_timer( ble_scan_duration );
+            schedule_producer( ble_scan_duration );
             HAL_DBG_TRACE_PRINTF( "ble begin, new alarm %d s\n\n", ble_scan_duration );
             tracker_scan_begin = hal_rtc_get_time_s( );
             app_tracker_ble_scan_begin( );
@@ -1243,13 +1285,13 @@ static void app_tracker_scan_process( void )
             if( scan_result )
             {
                 next_delay = tracker_periodic_interval - ble_scan_duration;
-                smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+                schedule_producer( next_delay > 0 ? next_delay : 1 );
                 HAL_DBG_TRACE_PRINTF( "ble end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
                 tracker_scan_status = 0xff;
             }
             else
             {
-                smtc_modem_alarm_start_timer( wifi_scan_duration );
+                schedule_producer( wifi_scan_duration );
                 HAL_DBG_TRACE_PRINTF( "ble end\r\nwifi begin, new alarm %d s\n\n", wifi_scan_duration );
                 app_tracker_wifi_scan_begin( );
                 tracker_scan_status = 2;
@@ -1258,7 +1300,7 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 2 )
         {
             next_delay = tracker_periodic_interval - ble_scan_duration - wifi_scan_duration;
-            smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+            schedule_producer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "wifi end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_wifi_scan_end( );
             tracker_scan_status = 0xff;
@@ -1268,7 +1310,7 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            smtc_modem_alarm_start_timer( ble_scan_duration );
+            schedule_producer( ble_scan_duration );
             HAL_DBG_TRACE_PRINTF( "ble begin, new alarm %d s\n\n", ble_scan_duration );
             tracker_scan_begin = hal_rtc_get_time_s( );
             app_tracker_ble_scan_begin( );
@@ -1280,13 +1322,13 @@ static void app_tracker_scan_process( void )
             if( scan_result )
             {
                 next_delay = tracker_periodic_interval - ble_scan_duration;
-                smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+                schedule_producer( next_delay > 0 ? next_delay : 1 );
                 HAL_DBG_TRACE_PRINTF( "ble end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
                 tracker_scan_status = 0xff;
             }
             else
             {
-                smtc_modem_alarm_start_timer( gnss_scan_duration );
+                schedule_producer( gnss_scan_duration );
                 HAL_DBG_TRACE_PRINTF( "ble end\r\ngnss begin, new alarm %d s\n\n", gnss_scan_duration );
                 app_tracker_gnss_scan_begin( );
                 tracker_scan_status = 2;
@@ -1295,7 +1337,7 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 2 )
         {
             next_delay = tracker_periodic_interval - ble_scan_duration - gnss_scan_duration;
-            smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+            schedule_producer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_gnss_scan_end( );
             tracker_scan_status = 0xff;
@@ -1305,7 +1347,7 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            smtc_modem_alarm_start_timer( ble_scan_duration );
+            schedule_producer( ble_scan_duration );
             HAL_DBG_TRACE_PRINTF( "ble begin, new alarm %d s\n\n", ble_scan_duration );
             tracker_scan_begin = hal_rtc_get_time_s( );
             app_tracker_ble_scan_begin( );
@@ -1317,13 +1359,13 @@ static void app_tracker_scan_process( void )
             if( scan_result )
             {
                 next_delay = tracker_periodic_interval - ble_scan_duration;
-                smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+                schedule_producer( next_delay > 0 ? next_delay : 1 );
                 HAL_DBG_TRACE_PRINTF( "ble end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
                 tracker_scan_status = 0xff;
             }
             else
             {
-                smtc_modem_alarm_start_timer( wifi_scan_duration );
+                schedule_producer( wifi_scan_duration );
                 HAL_DBG_TRACE_PRINTF( "ble end\r\nwifi begin, new alarm %d s\n\n", wifi_scan_duration );
                 app_tracker_wifi_scan_begin( );
                 tracker_scan_status = 2;
@@ -1335,13 +1377,13 @@ static void app_tracker_scan_process( void )
             if( scan_result )
             {
                 next_delay = tracker_periodic_interval - ble_scan_duration - wifi_scan_duration;
-                smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+                schedule_producer( next_delay > 0 ? next_delay : 1 );
                 HAL_DBG_TRACE_PRINTF( "wifi end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
                 tracker_scan_status = 0xff;
             }
             else
             {
-                smtc_modem_alarm_start_timer( gnss_scan_duration );
+                schedule_producer( gnss_scan_duration );
                 HAL_DBG_TRACE_PRINTF( "wifi end\r\ngnss begin, new alarm %d s\n\n", gnss_scan_duration );
                 tracker_scan_status = 3;
                 app_tracker_gnss_scan_begin( );
@@ -1350,7 +1392,7 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 3 )
         {
             next_delay = tracker_periodic_interval - ble_scan_duration - wifi_scan_duration - gnss_scan_duration;
-            smtc_modem_alarm_start_timer( next_delay > 0 ? next_delay : 1 );
+            schedule_producer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_gnss_scan_end( );
             tracker_scan_status = 0xff;
@@ -1421,7 +1463,7 @@ void app_tracker_new_run( uint8_t event )
         if(( modem_status & SMTC_MODEM_STATUS_JOINED ) == SMTC_MODEM_STATUS_JOINED )
         {
             smtc_modem_alarm_clear_timer( );
-            smtc_modem_alarm_start_timer( 1 );
+            schedule_producer( 1 );
             hal_sleep_exit( );
         }
         else
@@ -1479,7 +1521,7 @@ uint32_t app_tracker_get_interval( void )
 void app_tracker_force_drain( void )
 {
     force_drain_pending = true;
-    smtc_modem_alarm_start_timer( 1 );  /* kick drain immediately */
+    schedule_consumer( 1 );
 }
 
 void app_tracker_turbo_toggle( void )
@@ -1492,7 +1534,7 @@ void app_tracker_turbo_toggle( void )
         /* Kick drain, but don't interrupt a running scan */
         if( tracker_scan_status != 1 )
         {
-            smtc_modem_alarm_start_timer( 1 );
+            schedule_producer( 1 );
         }
     }
     else
@@ -1502,7 +1544,7 @@ void app_tracker_turbo_toggle( void )
         tracker_periodic_interval = 60;
         turbo_active = true;
         /* Kick off first turbo scan immediately (2s delay for beep to finish) */
-        smtc_modem_alarm_start_timer( 2 );
+        schedule_producer( 2 );
     }
 }
 
