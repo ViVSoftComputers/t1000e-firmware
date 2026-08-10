@@ -89,6 +89,7 @@ uint32_t tracker_periodic_interval = 60;    // in minute
 
 /* Turbo mode — double-press toggles 30-second scan interval */
 static bool     turbo_active = false;
+        smtc_modem_alarm_start_timer( 1 );  /* kick drain on turbo exit */
 static uint32_t saved_periodic_interval = 60;
 
 uint8_t wifi_scan_max = 3;
@@ -1420,6 +1421,7 @@ void app_tracker_turbo_toggle( void )
         /* Exit turbo — restore saved interval */
         tracker_periodic_interval = saved_periodic_interval;
         turbo_active = false;
+        smtc_modem_alarm_start_timer( 1 );  /* kick drain on turbo exit */
     }
     else
     {
