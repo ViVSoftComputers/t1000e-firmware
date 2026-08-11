@@ -1109,10 +1109,17 @@ static void app_tracker_scan_result_send( void )
         }
         event_state = 0;  /* clear after every scan */
 
-
-        /* Producer schedules its own next scan — never kicks consumer.
-         * Consumer drains on its own independent timer. */
+        /* If a user press was queued during this scan, start it now */
+        if( user_press_pending > 0 )
         {
+            user_press_pending -= 1;
+            event_state = TRACKER_STATE_BIT8_USER;
+            schedule_producer( 1 );  /* start queued scan immediately */
+        }
+        else
+        {
+            /* Producer schedules its own next scan — never kicks consumer.
+             * Consumer drains on its own independent timer. */
             int32_t next_delay = tracker_periodic_interval - ( hal_rtc_get_time_s( ) - tracker_scan_begin );
             schedule_producer( next_delay > 0 ? next_delay : 1 );
         }
