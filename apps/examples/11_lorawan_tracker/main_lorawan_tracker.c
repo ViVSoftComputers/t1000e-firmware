@@ -1202,16 +1202,21 @@ static void app_tracker_scan_process( void )
             }
             else if( gps_elapsed >= 30 )
             {
-                /* Hard timeout — GPS didn't get a fix in 30s */
+                /* Hard timeout — GPS didn't get a fix in 30s.
+                 * Clean up here directly; skip result_send to avoid
+                 * double-beeping (timeout + no-fix from same scan). */
                 app_tracker_gnss_scan_end( );
-                tracker_scan_status = 0xff;
-                schedule_producer( 1 );
                 /* Distinctive 500ms beep — timeout feedback */
                 hal_pwm_init( 2000 );
                 hal_beep_on( );
                 hal_mcu_wait_ms( 500 );
                 hal_beep_off( );
                 hal_pwm_deinit( );
+                /* Reset and reschedule */
+                event_state = 0;
+                tracker_scan_status = 0;
+                scan_result_num = 0;
+                schedule_producer( tracker_periodic_interval - 30 );
             }
             else if( event_state == TRACKER_STATE_BIT8_USER || turbo_active )
             {
