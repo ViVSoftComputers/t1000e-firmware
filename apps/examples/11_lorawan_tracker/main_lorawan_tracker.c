@@ -83,7 +83,7 @@ static uint8_t scan_stall_count = 0;       /* watchdog: resets stuck scan state 
 
 uint8_t tracker_scan_type = 0;
 
-uint32_t gnss_scan_duration = 45;            // in second
+uint32_t gnss_scan_duration = 15;            // in second
 uint32_t wifi_scan_duration = 3;            // in second
 uint32_t ble_scan_duration = 3;             // in second
 uint32_t tracker_periodic_interval = 300;   // 5 min default (changed via downlink)
@@ -133,7 +133,7 @@ static uint32_t producer_next_s = 0;  /* absolute RTC seconds */
 static uint32_t consumer_next_s = 0;  /* absolute RTC seconds */
 
 uint8_t event_state = 0;
-static uint8_t user_press_pending = 0;  /* queued presses during scan */
+  /* queued presses during scan */
 
 /*
  * -----------------------------------------------------------------------------
@@ -630,7 +630,18 @@ static void on_modem_alarm( void )
         }
         else if( tracker_cache_count( ) == 0 )
         {
-            /* Nothing to drain — check again next schedule */
+            /* Nothing to drain.
+             * If force-drain was requested, beep completion now —
+             * no TX-done will ever fire since there's nothing to send. */
+            if( force_drain_pending )
+            {
+                force_drain_pending = false;
+                hal_pwm_init( 2000 );
+                hal_beep_on( );
+                hal_mcu_wait_ms( 500 );
+                hal_beep_off( );
+                hal_pwm_deinit( );
+            }
             schedule_consumer( tracker_drain_interval );
         }
         else
@@ -1091,12 +1102,6 @@ static void app_tracker_scan_result_send( void )
                 }
                 hal_pwm_deinit( );
             }
-        /* If another press was queued during this scan, process it */
-        if( user_press_pending > 0 )
-        {
-            user_press_pending -= 1;
-            event_state = TRACKER_STATE_BIT8_USER;
-        }
         }
         else if ( turbo_active )
         {
@@ -1109,17 +1114,9 @@ static void app_tracker_scan_result_send( void )
         }
         event_state = 0;  /* clear after every scan */
 
-        /* If a user press was queued during this scan, start it now */
-        if( user_press_pending > 0 )
+        /* Producer schedules its own next scan — never kicks consumer.
+         * Consumer drains on its own independent timer. */
         {
-            user_press_pending -= 1;
-            event_state = TRACKER_STATE_BIT8_USER;
-            schedule_producer( 1 );  /* start queued scan immediately */
-        }
-        else
-        {
-            /* Producer schedules its own next scan — never kicks consumer.
-             * Consumer drains on its own independent timer. */
             int32_t next_delay = tracker_periodic_interval - ( hal_rtc_get_time_s( ) - tracker_scan_begin );
             schedule_producer( next_delay > 0 ? next_delay : 1 );
         }
@@ -1454,10 +1451,9 @@ bool app_send_frame( const uint8_t* buffer, const uint8_t length, bool tx_confir
 
 void app_tracker_new_run( uint8_t event )
 {
-    /* If a scan is already running, queue this press and return. */
+    /* If a scan is already running, ignore additional presses. */
     if( tracker_scan_status != 0 )
     {
-        user_press_pending += 1;
         return;
     }
     event_state = event;
