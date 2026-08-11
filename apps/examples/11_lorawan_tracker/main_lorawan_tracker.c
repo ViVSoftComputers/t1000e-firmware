@@ -124,7 +124,8 @@ uint8_t tracker_scan_data_temp[64] = { 0 };
 
 bool scan_result = false;
 static bool cache_drain_active = false;
-static uint32_t drain_start_time_s = 0;    /* TX timeout watchdog */
+static uint32_t drain_start_time_s = 0;    /* per-entry TX watchdog */
+static uint32_t drain_overall_start_s = 0; /* overall drain chain timeout */
 static bool force_drain_pending = false;    /* completion beep after force-drain */
 int8_t scan_result_num = 0;
 
@@ -649,13 +650,19 @@ static void on_modem_alarm( void )
         {
             /* Cache has entries but drain is still in progress.
              * Check again soon — avoids spinning on every alarm tick.
-             * Watchdog: if TX hasn't completed in 60s, force-reset. */
-            uint32_t drain_elapsed = now - drain_start_time_s;
-            if( drain_elapsed > 60 )
+             * Watchdog: if TX hasn't completed in 120s, abort drain
+             * and wait for next scheduled interval. */
+            uint32_t drain_elapsed = now - drain_overall_start_s;
+            if( drain_elapsed > 120 )
             {
-                cache_drain_active = false;  /* force timeout */
+                cache_drain_active = false;   /* force timeout */
+                drain_overall_start_s = 0;    /* reset for next drain chain */
+                schedule_consumer( tracker_drain_interval );
             }
-            schedule_consumer( 3 );
+            else
+            {
+                schedule_consumer( 3 );
+            }
         }
     }
 
@@ -700,12 +707,14 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
                 hal_beep_off( );
                 hal_pwm_deinit( );
             }
+            drain_overall_start_s = 0;
             schedule_consumer( tracker_drain_interval );
         }
     }
     else
     {
         /* Out of range (SENT/NOT_SENT) — stop, retry next schedule. */
+        drain_overall_start_s = 0;
         cache_drain_active = false;
         if( tracker_cache_count( ) == 0 )
         {
@@ -725,7 +734,11 @@ static void cache_consumer_trigger( void )
         if( entry && entry_len > 0 )
         {
             cache_drain_active = true;
-            drain_start_time_s = hal_rtc_get_time_s( );  /* watchdog */
+            drain_start_time_s = hal_rtc_get_time_s( );  /* per-entry watchdog */
+            if( drain_overall_start_s == 0 )
+            {
+                drain_overall_start_s = hal_rtc_get_time_s( );  /* drain chain start */
+            }
             /* Use CONFIRMED — only pop on real ACK */
             if( !app_send_frame( entry, entry_len, true, false ) )
             {
