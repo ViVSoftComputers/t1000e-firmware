@@ -1155,8 +1155,9 @@ static void app_tracker_scan_process( void )
     static uint8_t last_status = 0xFF;  /* watchdog: detect stuck state */
 
     /* Scan stall watchdog: if status hasn't changed for 3 alarm ticks,
-     * force-reset to idle. Prevents GNSS/driver hangs from freezing device. */
-    if( tracker_scan_status == last_status )
+     * force-reset to idle. Prevents GNSS/driver hangs from freezing device.
+     * Skip status 1 (GPS scan in progress) — the 30s timeout handles that. */
+    if( tracker_scan_status == last_status && tracker_scan_status != 1 )
     {
         if( ++scan_stall_count >= 3 )
         {
