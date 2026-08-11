@@ -136,6 +136,7 @@ static uint32_t consumer_next_s = 0;  /* absolute RTC seconds */
 
 uint8_t event_state = 0;
   /* queued presses during scan */
+static bool producer_pending = false;   /* ISR-safe kick flag */
 
 /*
  * -----------------------------------------------------------------------------
@@ -330,6 +331,13 @@ APP_MAIN:
 
     while( 1 )
     {
+        /* ISR-safe producer kick: button ISR sets producer_pending,
+         * we call schedule_producer() here in main-loop context. */
+        if( producer_pending )
+        {
+            producer_pending = false;
+            schedule_producer( 1 );
+        }
         /* Execute modem runtime, this function must be called again in sleep_time_ms milliseconds or sooner. */
         uint32_t sleep_time_ms = smtc_modem_run_engine( );
         /* go in low power */
@@ -1177,9 +1185,16 @@ static void app_tracker_scan_process( void )
             uint32_t gps_elapsed = hal_rtc_get_time_s( ) - gps_scan_start_time;
             if( gps_elapsed >= 30 )
             {
+                /* Hard timeout — GPS didn't get a fix in 30s */
                 app_tracker_gnss_scan_end( );
                 tracker_scan_status = 0xff;
                 schedule_producer( 1 );
+                /* Distinctive 1s beep — timeout feedback */
+                hal_pwm_init( 2000 );
+                hal_beep_on( );
+                hal_mcu_wait_ms( 500 );
+                hal_beep_off( );
+                hal_pwm_deinit( );
             }
             else
             {
@@ -1482,26 +1497,10 @@ void app_tracker_new_run( uint8_t event )
         return;
     }
     event_state = event;
-    if( tracker_scan_status == 0 ) // Not tracking — start new scan immediately
+    if( tracker_scan_status == 0 ) // Not tracking — flag for main loop
     {
-        smtc_modem_status_mask_t modem_status;
-        smtc_modem_get_status( 0, &modem_status );
-        if(( modem_status & SMTC_MODEM_STATUS_JOINED ) == SMTC_MODEM_STATUS_JOINED )
-        {
-            smtc_modem_alarm_clear_timer( );
-            schedule_producer( 1 );
-            hal_sleep_exit( );
-        }
-        else
-        {
-            event_state = 0;
-            scan_result_num = 0;
-            PRINTF( "\r\nNOT JOINED, SKIP NEW TRACKING\r\n" );
-        }
-    }
-    else
-    {
-        PRINTF( "\r\nTRACKING IS DOING, SKIP NEW ONE\r\n" );
+        producer_pending = true;
+        hal_sleep_exit( );  /* wake CPU so main loop picks up the flag */
     }
 }
 
