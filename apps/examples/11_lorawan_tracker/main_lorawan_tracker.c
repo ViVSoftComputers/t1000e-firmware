@@ -92,6 +92,7 @@ uint32_t tracker_drain_interval = 1500;  /* consumer drains every 25 min, indepe
 /* Turbo mode — double-press toggles 30-second scan interval */
 static bool     turbo_active = false;
 static uint32_t saved_periodic_interval = 60;
+static uint32_t gps_scan_start_time = 0;    /* timeout watchdog */
 
 uint8_t wifi_scan_max = 3;
 uint8_t ble_scan_max = 3;
@@ -1154,16 +1155,27 @@ static void app_tracker_scan_process( void )
             schedule_producer( gnss_scan_duration );
             HAL_DBG_TRACE_PRINTF( "gnss begin, new alarm %d s\n\n", gnss_scan_duration );
             tracker_scan_begin = hal_rtc_get_time_s( );
+            gps_scan_start_time = hal_rtc_get_time_s( );
             app_tracker_gnss_scan_begin( );
             tracker_scan_status = 1;
         }
         else if( tracker_scan_status == 1 )
         {
+            uint32_t gps_elapsed = hal_rtc_get_time_s( ) - gps_scan_start_time;
+            if( gps_elapsed >= 30 )
+            {
+                app_tracker_gnss_scan_end( );
+                tracker_scan_status = 0xff;
+                schedule_producer( 1 );
+            }
+            else
+            {
             if ( event_state == TRACKER_STATE_BIT8_USER || turbo_active ) { next_delay = 1; } else { next_delay = tracker_periodic_interval - gnss_scan_duration; }
             schedule_producer( next_delay > 0 ? next_delay : 1 );
             HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
             app_tracker_gnss_scan_end( );
             tracker_scan_status = 0xff;
+            }
         }
     }
     else if(( scan_result == false ) && ( tracker_scan_type == TRACKER_SCAN_WIFI_ONLY ))
