@@ -1177,8 +1177,12 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            schedule_producer( gnss_scan_duration );
-            HAL_DBG_TRACE_PRINTF( "gnss begin, new alarm %d s\n\n", gnss_scan_duration );
+            /* User scans poll every 5s for fast fix — scheduled scans
+             * use gnss_scan_duration for power efficiency. */
+            uint32_t first_poll = ( event_state == TRACKER_STATE_BIT8_USER || turbo_active )
+                                  ? 5 : gnss_scan_duration;
+            schedule_producer( first_poll );
+            HAL_DBG_TRACE_PRINTF( "gnss begin, new alarm %d s\n\n", first_poll );
             tracker_scan_begin = hal_rtc_get_time_s( );
             gps_scan_start_time = hal_rtc_get_time_s( );
             app_tracker_gnss_scan_begin( );
@@ -1187,28 +1191,41 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 1 )
         {
             uint32_t gps_elapsed = hal_rtc_get_time_s( ) - gps_scan_start_time;
-            /* Only timeout if GPS genuinely has no fix — alarm delays
-             * from drain activity can push us past 30s even with a fix. */
-            if( gps_elapsed >= 30 && !gnss_get_fix_status( ))
+
+            if( gnss_get_fix_status( ) )
+            {
+                /* Got a fix — end immediately, no need to wait */
+                app_tracker_gnss_scan_end( );
+                schedule_producer( 1 );
+                tracker_scan_status = 0xff;
+            }
+            else if( gps_elapsed >= 30 )
             {
                 /* Hard timeout — GPS didn't get a fix in 30s */
                 app_tracker_gnss_scan_end( );
                 tracker_scan_status = 0xff;
                 schedule_producer( 1 );
-                /* Distinctive 1s beep — timeout feedback */
+                /* Distinctive 500ms beep — timeout feedback */
                 hal_pwm_init( 2000 );
                 hal_beep_on( );
                 hal_mcu_wait_ms( 500 );
                 hal_beep_off( );
                 hal_pwm_deinit( );
             }
+            else if( event_state == TRACKER_STATE_BIT8_USER || turbo_active )
+            {
+                /* User/turbo scan: poll again in 5s, GPS still acquiring.
+                 * tracker_scan_status stays 1 — scan continues running. */
+                schedule_producer( 5 );
+            }
             else
             {
-            if ( event_state == TRACKER_STATE_BIT8_USER || turbo_active ) { next_delay = 1; } else { next_delay = tracker_periodic_interval - gnss_scan_duration; }
-            schedule_producer( next_delay > 0 ? next_delay : 1 );
-            HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
-            app_tracker_gnss_scan_end( );
-            tracker_scan_status = 0xff;
+                /* Scheduled scan: end and save whatever we have */
+                if ( event_state == TRACKER_STATE_BIT8_USER || turbo_active ) { next_delay = 1; } else { next_delay = tracker_periodic_interval - gnss_scan_duration; }
+                schedule_producer( next_delay > 0 ? next_delay : 1 );
+                HAL_DBG_TRACE_PRINTF( "gnss end, new alarm %d s\n\n", next_delay > 0 ? next_delay : 1 );
+                app_tracker_gnss_scan_end( );
+                tracker_scan_status = 0xff;
             }
         }
     }
