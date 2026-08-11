@@ -87,7 +87,7 @@ uint32_t gnss_scan_duration = 15;            // in second
 uint32_t wifi_scan_duration = 3;            // in second
 uint32_t ble_scan_duration = 3;             // in second
 uint32_t tracker_periodic_interval = 300;   // 5 min default (changed via downlink)
-uint32_t tracker_drain_interval = 300;   /* consumer drains every 5 min, independent of scan */
+uint32_t tracker_drain_interval = 1500;  /* consumer drains every 25 min, independent of scan */
 
 /* Turbo mode — double-press toggles 30-second scan interval */
 static bool     turbo_active = false;
