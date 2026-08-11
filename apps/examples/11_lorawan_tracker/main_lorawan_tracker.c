@@ -332,11 +332,15 @@ APP_MAIN:
     while( 1 )
     {
         /* ISR-safe producer kick: button ISR sets producer_pending,
-         * we call schedule_producer() here in main-loop context. */
+         * we call schedule_producer() here in main-loop context.
+         * Only start scan if idle — don't collide with running scan. */
         if( producer_pending )
         {
             producer_pending = false;
-            schedule_producer( 1 );
+            if( tracker_scan_status == 0 )
+            {
+                schedule_producer( 1 );
+            }
         }
         /* Execute modem runtime, this function must be called again in sleep_time_ms milliseconds or sooner. */
         uint32_t sleep_time_ms = smtc_modem_run_engine( );
@@ -1183,7 +1187,9 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 1 )
         {
             uint32_t gps_elapsed = hal_rtc_get_time_s( ) - gps_scan_start_time;
-            if( gps_elapsed >= 30 )
+            /* Only timeout if GPS genuinely has no fix — alarm delays
+             * from drain activity can push us past 30s even with a fix. */
+            if( gps_elapsed >= 30 && !gnss_get_fix_status( ))
             {
                 /* Hard timeout — GPS didn't get a fix in 30s */
                 app_tracker_gnss_scan_end( );
