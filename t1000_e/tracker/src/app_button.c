@@ -6,12 +6,18 @@
 #include "app_button.h"
 #include "smtc_modem_api.h"
 
-/* v22: Turbo toggle — declared in main_lorawan_tracker.c.
+/* v25: Button-triggered actions are declared in main_lorawan_tracker.c.
  * Can't include main_lorawan_tracker.h from here (include path issue),
- * so use extern declarations. */
-extern void app_tracker_turbo_toggle( void );
-extern bool app_tracker_is_turbo( void );
-extern void app_tracker_force_drain( void );
+ * so use extern declarations.
+ *
+ * These three are the ONLY tracker functions this file may call. They
+ * just record a request and wake the CPU — this handler runs in RTC
+ * interrupt context (see main_lorawan_tracker.h), so it must never touch
+ * tracker_scan_status, the modem alarm, or do blocking beeps directly;
+ * all of that happens later in the main loop. */
+extern void app_tracker_request_scan_now( void );
+extern void app_tracker_request_turbo_toggle( void );
+extern void app_tracker_request_force_drain( void );
 
 APP_TIMER_DEF(m_button_event_timer_id);
 APP_TIMER_DEF(m_ble_adv_event_timer_id);
@@ -42,12 +48,6 @@ hal_gpio_irq_t app_button_irq = {
 extern uint8_t tracker_test_mode;
 extern uint8_t app_beep_state;
 extern uint8_t app_led_state;
-extern uint8_t tracker_scan_status;  /* v25: busy check */
-extern uint8_t event_state;
-extern uint8_t scan_result_num;
-extern uint8_t event_state;
-extern uint8_t scan_result_num;
-extern uint32_t tracker_periodic_interval;
 
 void app_button_irq_handler( void *obj )
 {
@@ -109,7 +109,7 @@ void app_user_button_event_timeout_handler( void *p_context )
         // PRINTF( "BUTTON_PRESS_CLICK: %d\r\n", button_click_cnt );
         switch( button_click_cnt )
         {
-            case BUTTON_PRESS_ONECE: // user-triggered scan
+            case BUTTON_PRESS_ONECE: // user-triggered scan request
             {
                 button_click_cnt = 0;
 
@@ -119,59 +119,11 @@ void app_user_button_event_timeout_handler( void *p_context )
                     return;
                 }
 
-                /* v25: Check if producer is already busy before beeping.
-                 * If scan running but stuck >60s, force-reset and proceed.
-                 * Otherwise, fail immediately with error beep. */
-                if( tracker_scan_status != 0 )
-                {
-                    static uint32_t stuck_noticed = 0;
-                    static uint8_t prev_status = 0;
-                    uint32_t now = hal_rtc_get_time_s( );
-                    if( tracker_scan_status != prev_status )
-                    {
-                        prev_status = tracker_scan_status;
-                        stuck_noticed = now;
-                    }
-                    if(( now - stuck_noticed ) > 60 )
-                    {
-                        tracker_scan_status = 0;
-                        scan_result_num = 0;
-                        event_state = 0;
-                        PRINTF( "SCAN_STUCK_RESET, proceeding\r\n" );
-                    }
-                    else
-                    {
-                        hal_pwm_init( 2000 );
-                        hal_beep_on( ); hal_mcu_wait_ms( 40 );
-                        hal_beep_off( ); hal_mcu_wait_ms( 40 );
-                        hal_beep_on( ); hal_mcu_wait_ms( 40 );
-                        hal_beep_off( );
-                        hal_pwm_deinit( );
-                        PRINTF( "SCAN_BUSY, SKIP_IT\r\n" );
-                        return;
-                    }
-                }
-
-                smtc_modem_status_mask_t modem_status;
-                smtc_modem_get_status( 0, &modem_status );
-                if(( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
-                {
-                    PRINTF( "LORA_JOINING, SKIP_IT\r\n" );
-                    return;
-                }
-
-                /* v22: Beep/feedback moved to scan result handler
-                 * (app_tracker_scan_result_send) — 3 beeps for GPS fix,
-                 * 5 beeps for no fix. */
-                app_tracker_new_run( TRACKER_STATE_BIT8_USER );
-
-                /* Short ack beep — button press confirmed */
-                hal_pwm_init( 2000 );
-                hal_beep_on( );
-                hal_mcu_wait_ms( 40 );
-                hal_beep_off( );
-                hal_pwm_deinit( );
-                PRINTF( "\r\nUSER_SCAN\r\n\r\n" );
+                /* Busy check, beep, and the actual scan start all happen
+                 * in the main loop — see process_pending_button_action()
+                 * in main_lorawan_tracker.c. */
+                app_tracker_request_scan_now( );
+                PRINTF( "\r\nUSER_SCAN_REQUESTED\r\n\r\n" );
             }
             break;
 
@@ -184,32 +136,8 @@ void app_user_button_event_timeout_handler( void *p_context )
                     return;
                 }
 
-                smtc_modem_status_mask_t modem_status;
-                smtc_modem_get_status( 0, &modem_status );
-                if(( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
-                {
-                    return;
-                }
-
-                app_tracker_turbo_toggle( );
-                if ( app_tracker_is_turbo( ) )
-                {
-                    /* Entered turbo — long beep confirm */
-                    hal_pwm_init( 2000 );
-                    hal_beep_on( );
-                    hal_mcu_wait_ms( 500 );
-                    hal_beep_off( );
-                    hal_pwm_deinit( );
-                }
-                else
-                {
-                    /* Exited turbo — long beep confirm */
-                    hal_pwm_init( 2000 );
-                    hal_beep_on( );
-                    hal_mcu_wait_ms( 500 );
-                    hal_beep_off( );
-                    hal_pwm_deinit( );
-                }
+                /* Toggle + beep happen in the main loop. */
+                app_tracker_request_turbo_toggle( );
             }
             break;
 
@@ -265,23 +193,9 @@ void app_user_button_event_timeout_handler( void *p_context )
                     return;
                 }
 
-                smtc_modem_status_mask_t modem_status;
-                smtc_modem_get_status( 0, &modem_status );
-                if(( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
-                {
-                    return;
-                }
-
-                /* Long beep: drain starting */
-                hal_pwm_init( 2000 );
-                hal_beep_on( );
-                hal_mcu_wait_ms( 500 );
-                hal_beep_off( );
-                hal_pwm_deinit( );
-
-                app_tracker_force_drain( );
-
-                /* Completion beep fires in on_modem_tx_done when cache empties */
+                /* Start beep + drain trigger happen in the main loop.
+                 * Completion beep fires in on_modem_tx_done when cache empties. */
+                app_tracker_request_force_drain( );
             }
             break;
 

@@ -178,11 +178,20 @@ flowchart LR
 
 ### ISR-Safe Architecture
 
-The button press handler runs in GPIO interrupt context. To avoid corrupted modem state:
+`APP_TIMER_CONFIG_USE_SCHEDULER` is `0` in `sdk_config.h`, which means `app_timer`
+callbacks — including the button click handler — run directly in RTC interrupt
+context, not the main loop. To avoid racing the main loop's modem/producer state:
 
-- **Button ISR**: only sets `producer_pending = true` + `hal_sleep_exit()`. ZERO modem API calls.
-- **Main loop**: picks up `producer_pending`, calls `smtc_modem_alarm_clear_timer()` + `schedule_producer(1)` from safe context.
-- **Busy check**: `tracker_scan_status` acts as a mutex — button ISR checks it before beeping, main loop checks it before starting scan.
+- **Button click handler** (`app_button.c`): only sets `pending_button_action`
+  (one of scan-now / turbo-toggle / force-drain) + `hal_sleep_exit()`. ZERO
+  modem API calls, ZERO reads/writes of `tracker_scan_status` or the alarm.
+- **Main loop** (`process_pending_button_action()` in `main_lorawan_tracker.c`):
+  picks up `pending_button_action` once per iteration and does the real work —
+  busy check, beep, `smtc_modem_alarm_clear_timer()` / `schedule_producer()` /
+  `schedule_consumer()` — all from safe, single-threaded context.
+- **Busy check**: `tracker_scan_status` acts as a mutex, checked only from the
+  main loop now, so there's no window where button-interrupt context and the
+  main loop can both be mutating it at once.
 
 ### Watchdogs
 

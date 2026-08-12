@@ -137,6 +137,21 @@ static uint32_t consumer_next_s = 0;  /* absolute RTC seconds */
 uint8_t event_state = 0;
   /* queued presses during scan */
 
+/* Button-triggered action request, set only from button/timer-interrupt
+ * context (see app_tracker_request_* below) and drained once per main-loop
+ * iteration by process_pending_button_action(). This is the ONLY thing
+ * that context is allowed to touch — everything else (tracker_scan_status,
+ * the modem alarm, beeps) is single-threaded to the main loop. */
+typedef enum
+{
+    BUTTON_ACTION_NONE = 0,
+    BUTTON_ACTION_SCAN_NOW,
+    BUTTON_ACTION_TURBO_TOGGLE,
+    BUTTON_ACTION_FORCE_DRAIN,
+} button_action_t;
+
+static volatile button_action_t pending_button_action = BUTTON_ACTION_NONE;
+
 /*
  * -----------------------------------------------------------------------------
  * --- PRIVATE FUNCTIONS DECLARATION -------------------------------------------
@@ -180,6 +195,7 @@ static void on_modem_network_joined( void );
  */
 static void on_modem_alarm( void );
 static void stuck_scan_watchdog( void );
+static void process_pending_button_action( void );
 
 /*!
  * @brief Tx done event callback
@@ -331,6 +347,11 @@ APP_MAIN:
 
     while( 1 )
     {
+        /* Handle any button-triggered request queued from interrupt context.
+         * Must run before the modem engine so a request can't sit for a
+         * full sleep cycle behind whatever the engine is doing. */
+        process_pending_button_action( );
+
         /* Execute modem runtime, this function must be called again in sleep_time_ms milliseconds or sooner. */
         uint32_t sleep_time_ms = smtc_modem_run_engine( );
 
@@ -643,6 +664,84 @@ static void stuck_scan_watchdog( void )
         scan_result_num = 0;
         event_state = 0;
         schedule_producer( tracker_periodic_interval );
+    }
+}
+
+/* Drain a button-triggered request. Main-loop context only — this is
+ * where it's safe to read/write tracker_scan_status, touch the modem
+ * alarm, and run blocking beep patterns. */
+static void process_pending_button_action( void )
+{
+    button_action_t action = pending_button_action;
+    if( action == BUTTON_ACTION_NONE )
+    {
+        return;
+    }
+    pending_button_action = BUTTON_ACTION_NONE;
+
+    smtc_modem_status_mask_t modem_status;
+    smtc_modem_get_status( 0, &modem_status );
+    if( ( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
+    {
+        HAL_DBG_TRACE_PRINTF( "LORA_JOINING, SKIP_IT\n" );
+        return;
+    }
+
+    switch( action )
+    {
+        case BUTTON_ACTION_SCAN_NOW:
+        {
+            if( tracker_scan_status != 0 )
+            {
+                /* Mutual exclusion — a scan is already running, deny. */
+                hal_pwm_init( 2000 );
+                hal_beep_on( ); hal_mcu_wait_ms( 40 );
+                hal_beep_off( ); hal_mcu_wait_ms( 40 );
+                hal_beep_on( ); hal_mcu_wait_ms( 40 );
+                hal_beep_off( );
+                hal_pwm_deinit( );
+                HAL_DBG_TRACE_PRINTF( "SCAN_BUSY, SKIP_IT\n" );
+                break;
+            }
+
+            app_tracker_new_run( TRACKER_STATE_BIT8_USER );
+
+            /* Ack beep — button press confirmed, scan starting */
+            hal_pwm_init( 2000 );
+            hal_beep_on( );
+            hal_mcu_wait_ms( 40 );
+            hal_beep_off( );
+            hal_pwm_deinit( );
+            break;
+        }
+
+        case BUTTON_ACTION_TURBO_TOGGLE:
+        {
+            app_tracker_turbo_toggle( );
+            /* Long beep confirms either enter or exit */
+            hal_pwm_init( 2000 );
+            hal_beep_on( );
+            hal_mcu_wait_ms( 500 );
+            hal_beep_off( );
+            hal_pwm_deinit( );
+            break;
+        }
+
+        case BUTTON_ACTION_FORCE_DRAIN:
+        {
+            /* Long beep: drain starting. Completion beep fires later,
+             * from on_modem_tx_done()/on_modem_alarm() when cache empties. */
+            hal_pwm_init( 2000 );
+            hal_beep_on( );
+            hal_mcu_wait_ms( 500 );
+            hal_beep_off( );
+            hal_pwm_deinit( );
+            app_tracker_force_drain( );
+            break;
+        }
+
+        default:
+            break;
     }
 }
 
@@ -1625,6 +1724,31 @@ void app_tracker_turbo_toggle( void )
 bool app_tracker_is_turbo( void )
 {
     return turbo_active;
+}
+
+/* ── Button-triggered action requests ────────────────────────────────
+ * Called from the button click handler, which runs in RTC interrupt
+ * context on this SDK config (see main_lorawan_tracker.h). Each of
+ * these does nothing but record the request and wake the CPU — actual
+ * handling happens in process_pending_button_action(), in the main
+ * loop, where it's safe to touch tracker/modem state. */
+
+void app_tracker_request_scan_now( void )
+{
+    pending_button_action = BUTTON_ACTION_SCAN_NOW;
+    hal_sleep_exit( );
+}
+
+void app_tracker_request_turbo_toggle( void )
+{
+    pending_button_action = BUTTON_ACTION_TURBO_TOGGLE;
+    hal_sleep_exit( );
+}
+
+void app_tracker_request_force_drain( void )
+{
+    pending_button_action = BUTTON_ACTION_FORCE_DRAIN;
+    hal_sleep_exit( );
 }
 
 /* --- EOF ------------------------------------------------------------------ */

@@ -112,6 +112,26 @@ void app_tracker_turbo_toggle( void );
 /** @brief Check if turbo mode is active */
 bool app_tracker_is_turbo( void );
 
+/** @brief Force-drain the cache immediately */
+void app_tracker_force_drain( void );
+
+/*
+ * Button-triggered action requests.
+ *
+ * These are the ONLY tracker/producer functions safe to call from the
+ * button press handler. The handler runs from an app_timer callback,
+ * which on this SDK config (APP_TIMER_CONFIG_USE_SCHEDULER=0) executes
+ * in RTC interrupt context, not the main loop. Calling into the modem
+ * API or mutating tracker_scan_status/producer_next_s directly from
+ * there races with on_modem_alarm() running in the main loop.
+ *
+ * Each of these just records the request and wakes the CPU; the actual
+ * work happens in the main loop via process_pending_button_action().
+ */
+void app_tracker_request_scan_now( void );
+void app_tracker_request_turbo_toggle( void );
+void app_tracker_request_force_drain( void );
+
 #ifdef __cplusplus
 }
 #endif
