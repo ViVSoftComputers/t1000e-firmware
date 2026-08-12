@@ -1,7 +1,7 @@
 # T1000-E Tracker Firmware — v25 Independent Producer/Consumer Edition
 
 Built: 2026-08-11  
-Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + LR1110)  
+Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
 > **v25 is a complete architectural rewrite.** Producer and consumer are fully independent — each has its own timer, own schedule, own watchdog. They share nothing except the ring buffer cache. Producer only touches GPS/sensors and writes to cache. Consumer only touches the LoRa radio and reads from cache. Neither blocks the other.
@@ -30,38 +30,54 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## v25 Button Behavior
 
 | Press | Action | Beep Feedback |
-|-------|--------|---------------|
-| **Single-press** | Trigger immediate scan (15s, 30s hard timeout) | Short ack beep on press (~40ms) · After scan: 3 short = GPS fix, 2 long = no fix |
-| **Double-press** | Toggle **turbo mode** (~1min scans) | 500ms long beep on enter · 500ms long beep on exit |
+|---|---|---|
+| **Single-press** | Trigger immediate scan (fast 5s polling, 30s timeout) | Ack beep if idle · 3 short = GPS fix · 2 long = no fix · 1 long = timeout · double-error-beep if busy |
+| **Double-press** | Toggle **turbo mode** (~1min scans, fast polling) | 500ms long beep on enter · 500ms long beep on exit |
 | **Triple-press** | BLE advertising | — |
-| **Quad-press** | **Force drain all cached entries** | 500ms long beep on start · 500ms long beep when complete |
+| **Quad-press** | **Force drain all cached entries** | 500ms long beep when complete |
 | **Long-press** (3s) | Power off | Power-off melody |
 
-### Single-Press Flow
-1. Button press → immediate 40ms ack beep
-2. 15s GNSS scan (30s hard timeout if alarm stalls)
-3. Data saved to cache (never blocks if drain is running — producer is independent)
-4. 3 short beeps (GPS fix) or 2 long beeps (no fix)
-5. Additional presses while scanning: silently ignored (no queue)
+### Beep Reference
 
-### GPS Scan Timeout
-- GNSS scan duration: **15 seconds** (typical)
-- **30-second hard timeout**: if the modem alarm system stalls, `scan_process` checks elapsed time at every alarm tick and force-terminates the scan at 30s regardless
-- This prevents single-click scans from running indefinitely when GPS can't get a fix
+| Pattern | Meaning |
+|---|---|
+| **Single 40ms** | Button press acknowledged — scan starting |
+| **Double 40ms** (quick) | **Busy — scan already running, try again later** |
+| **3 short** (80ms) | GPS fix acquired — position saved to cache |
+| **2 long** (500ms) | No GPS fix after scan duration |
+| **1 long** (500ms) | **Hard timeout** — GPS failed to acquire in 30s |
+| **500ms** | Turbo toggle or force-drain complete |
+
+### Single-Press Flow (Fast Polling)
+
+1. Button press → **busy check** — if scan already running, play error beep and bail immediately
+2. If idle → 40ms ack beep → GPS scan starts
+3. **Poll at 5s intervals** — if GPS has fix already, end immediately and beep 3×
+4. No fix yet → poll again in 5s → repeat up to 6 polls (30s total)
+5. **30s hard timeout** → force-end GPS, play 1 long timeout beep, reschedule
+6. Data saved to cache (never blocks if drain is running — producer is independent)
+
+**Power efficiency:** GPS only runs during the scan window. Between scans, the device sleeps. Scheduled scans use a one-shot 15s mode — no fast polling, just wake-once-and-save.
 
 ### Turbo Mode
-- Scans every **~1 minute** (independent of consumer drain interval)
+- Scans every **~1 minute** with fast 5s polling (independent of consumer drain interval)
 - Beeps **once** after each scan completes
 - Data is cached — consumer drains on its **own 25-minute schedule**
 - Turbo scan entries always save (motion gate bypassed — turbo is an explicit user action)
 - Double-press again to exit and restore previous scan interval
 
 ### Force Drain (Quad-Press)
-- Press 4× rapidly → 500ms beep (start) → consumer fast-drains all cached entries
+- Press 4× rapidly → consumer fast-drains all cached entries
 - In range: entries drain at 3s intervals via confirmed uplinks
 - Out of range: one attempt, then stops
-- Cache empty → 500ms beep (finish) — works immediately even with no entries
+- Cache empty → 500ms beep — works immediately even with no entries
 - Useful for flushing cached data immediately
+
+### Mutual Exclusion
+Only one scan runs at a time — if any scan is in progress (single-click, scheduled, or turbo), all other scan triggers are rejected:
+- **Button press while scanning** → error beep, ignore
+- **Scheduled scan while user scan active** → skip, wait for next cycle
+- **Turbo scan while single-click active** → skip, wait for next cycle
 
 ### Motion Gate (25m)
 Pure motion gate — only cache entries when the device actually moves.
@@ -88,21 +104,22 @@ Producer and consumer share **nothing** except the ring buffer cache. Each has:
 - Its own state (scan state machine / drain state machine)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                       on_modem_alarm()                          │
-│                                                                 │
-│  ┌─ if now >= consumer_next_s:                                 │
-│  │    ┌─ cache has entries + drain idle → drain one entry      │
-│  │    ├─ cache empty + force_drain → beep finish immediately   │
-│  │    ├─ cache empty → schedule_consumer(drain_interval=1500s) │
-│  │    └─ drain active → watch for 60s timeout → schedule(3s)   │
-│  │                                                              │
-│  └─ if now >= producer_next_s:                                  │
-│       └─ app_tracker_scan_process() → GPS → save to cache      │
-│           30s hard timeout if scan stalls                        │
-│                                                                 │
-│  sync_alarm() → min(producer_next, consumer_next) → modem alarm│
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                       on_modem_alarm()                              │
+│                                                                     │
+│  ┌─ if now >= consumer_next_s:                                     │
+│  │    ┌─ cache has entries + drain idle → drain one entry          │
+│  │    ├─ cache empty + force_drain → beep finish immediately       │
+│  │    ├─ cache empty → schedule_consumer(drain_interval=1500s)     │
+│  │    └─ drain active → watch for 120s timeout → schedule(3s)      │
+│  │                                                                  │
+│  └─ if now >= producer_next_s:                                      │
+│       └─ app_tracker_scan_process() → GPS → save to cache           │
+│           Fast 5s polling (user/turbo) or 15s one-shot (scheduled)  │
+│           30s hard timeout if GPS never gets a fix                   │
+│                                                                     │
+│  sync_alarm() → min(producer_next, consumer_next) → modem alarm    │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ```mermaid
@@ -113,8 +130,9 @@ flowchart LR
         SAVE["tracker_cache_save()"]
         GATE["Motion gate: moved >25m?"]
         TIMEOUT["30s hard timeout"]
+        ---
         P_TIMER -->|"timer expires"| SCAN
-        SCAN -->|"GPS fix / no fix"| GATE
+        SCAN -->|"5s poll (user)<br/>15s one-shot (sched)"| GATE
         GATE -->|"yes"| SAVE
         GATE -->|"no (stationary)"| SKIP["skip — cache conserved"]
         SCAN -.->|"stall recovery"| TIMEOUT
@@ -131,6 +149,7 @@ flowchart LR
         TX["app_send_frame()<br/>confirmed uplinks"]
         TXDONE["on_modem_tx_done()"]
         EMPTY["empty?<br/>force_drain beep"]
+        ---
         C_TIMER -->|"timer expires"| DRAIN
         DRAIN -->|"get oldest entry"| TX
         TX -->|"LoRaWAN"| TXDONE
@@ -152,16 +171,26 @@ flowchart LR
 | **Schedule function** | `schedule_producer(delay)` | `schedule_consumer(delay)` |
 | **Default interval** | 300s (5 min, configurable via downlink) | 1500s (25 min) |
 | **Never touches** | `app_send_frame()` or LoRa | `tracker_cache_save()` or GPS/sensors |
+| **GPS scan** | AG3335 (dedicated chip, UART) | — |
+| **Radio** | — | LR1110 (dedicated chip, SPI) |
 
 `sync_alarm()` picks the sooner of the two timers for the single modem alarm — both fire independently.
+
+### ISR-Safe Architecture
+
+The button press handler runs in GPIO interrupt context. To avoid corrupted modem state:
+
+- **Button ISR**: only sets `producer_pending = true` + `hal_sleep_exit()`. ZERO modem API calls.
+- **Main loop**: picks up `producer_pending`, calls `smtc_modem_alarm_clear_timer()` + `schedule_producer(1)` from safe context.
+- **Busy check**: `tracker_scan_status` acts as a mutex — button ISR checks it before beeping, main loop checks it before starting scan.
 
 ### Watchdogs
 
 | Watchdog | Side | Trigger | Action |
 |---|---|---|---|
-| **Scan stall** | Producer | Same scan status for 3 alarm ticks | Force-reset to idle |
-| **GPS scan timeout** | Producer | GPS scan running > 30s | Force `gnss_scan_end()` and advance state |
-| **Drain TX timeout** | Consumer | `cache_drain_active` stays true > 60s | Force-reset and reschedule |
+| **Scan stall** | Producer | Same scan status for 3 alarm ticks (skips status 1 — GPS scanning) | Force-reset to idle |
+| **GPS scan timeout** | Producer | GPS scan running > 30s with no fix | Force `gnss_scan_end()`, timeout beep, reset |
+| **Drain TX timeout** | Consumer | `cache_drain_active` stays true > 120s overall | Force-reset and reschedule (25 min) |
 | **send_frame failure** | Consumer | `app_send_frame()` returns false | Immediate drain reset |
 
 ### Drain Chain
@@ -175,17 +204,21 @@ When out of range:
 1. TX fails with `NOT_SENT` → `cache_drain_active = false` → `schedule_consumer(1500)`
 2. Next schedule tick retries
 
+**120s overall drain timeout**: if the drain chain takes longer than 2 minutes total (across all entries), it aborts and waits for the next scheduled interval.
+
 ## Key Design Decisions
 
 1. **Producer never calls `app_send_frame()`** — GPS/sensors only write to cache
 2. **Consumer never calls `tracker_cache_save()`** — LoRa only reads/drains from cache
 3. **Drain interval: 25 min** — consumer drains infrequently to save airtime; quad-press force-drains anytime
 4. **Pure motion gate** — no heartbeat forcing saves when stationary; empty cache = nothing to drain
-5. **Single-click: simple and fast** — 15s scan with 30s hard timeout, no queue, additional presses ignored while scanning
-6. **Turbo always saves** — explicit user action bypasses motion gate
-7. **Confirmed uplinks only** — cache entries popped only on real ACK, not on NOT_SENT
-8. **No mutual exclusion** — producer and consumer run concurrently in `on_modem_alarm()`
-9. **60s TX watchdog** — if modem never calls TX-done, consumer recovers automatically
+5. **Fast single-click: 5s polls** — GPS checked every 5s, returns immediately on fix; 30s hard cap. No queue.
+6. **Scheduled scans: 15s one-shot** — power-efficient; no polling, just wake once and save
+7. **Turbo always saves** — explicit user action bypasses motion gate, uses fast 5s polling
+8. **Mutual exclusion** — only one scan runs at a time; busy beep feedback on collision
+9. **Confirmed uplinks only** — cache entries popped only on real ACK, not on NOT_SENT
+10. **ISR-safe** — button ISR never calls modem API; all alarm operations happen in main loop context
+11. **120s drain timeout** — overall drain chain cap; resets and waits for next schedule
 
 ## Configuring Scan Interval (Downlink)
 
