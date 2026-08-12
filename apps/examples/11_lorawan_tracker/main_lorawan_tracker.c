@@ -1126,7 +1126,10 @@ static void app_tracker_scan_result_send( void )
             send_ok = true;
             last_tx_time = hal_rtc_get_time_s( );
         }
-        if( send_ok ) tracker_gps_scan_len = 0;
+        /* Always clear — this GPS result has been processed (cached or
+         * gated), either way. Leaving it set made the next call to this
+         * function re-process the same stale fix. */
+        tracker_gps_scan_len = 0;
     }
     else if( tracker_wifi_scan_len )
     {
@@ -1205,7 +1208,12 @@ static void app_tracker_scan_result_send( void )
         if( send_ok ) tracker_ble_scan_len = 0;
     }
 
-    if( send_ok ) scan_result_num -= 1;
+    /* Always decrement — exactly one branch above always runs, so exactly
+     * one pending result was always processed this call, whether or not
+     * the motion gate actually cached it. Gating this on send_ok left
+     * scan_result_num (and therefore tracker_scan_status) stuck whenever
+     * the motion gate skipped a stationary scheduled scan. */
+    scan_result_num -= 1;
     if( scan_result_num )
     {
         schedule_producer( LORWAN_SEND_INTERVAL_MIN );
