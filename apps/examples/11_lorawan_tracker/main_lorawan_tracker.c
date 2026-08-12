@@ -707,8 +707,8 @@ static void on_modem_alarm( void )
         }
     }
 
-    /* Producer: scan if its timer expired AND no scan is running */
-    if( now >= producer_next_s && tracker_scan_status == 0 )
+    /* Producer: scan if its timer expired */
+    if( now >= producer_next_s )
     {
         app_tracker_scan_process( );
         /* scan process calls schedule_producer() for next producer tick */
