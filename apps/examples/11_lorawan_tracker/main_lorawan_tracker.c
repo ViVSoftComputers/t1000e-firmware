@@ -77,7 +77,7 @@ static uint8_t adr_custom_list_kr920_default[16] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 
 static uint8_t adr_custom_list_in865_default[16] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 5, 5 }; // SF12,SF12,SF12,SF11,SF11,SF11,SF10,SF10,SF10,SF9,SF9,SF9,SF8,SF8,SF7,SF7
 static uint8_t adr_custom_list_ru864_default[16] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 5, 5 }; // SF12,SF12,SF12,SF11,SF11,SF11,SF10,SF10,SF10,SF9,SF9,SF9,SF8,SF8,SF7,SF7
 
-static uint8_t tracker_scan_status = 0;
+uint8_t tracker_scan_status = 0;
 static uint32_t tracker_scan_begin = 0;
 static uint8_t scan_stall_count = 0;       /* watchdog: resets stuck scan state */
 
@@ -333,12 +333,13 @@ APP_MAIN:
     {
         /* ISR-safe producer kick: button ISR sets producer_pending,
          * we call schedule_producer() here in main-loop context.
-         * Only start scan if idle — don't collide with running scan. */
+         * Clear old alarm first — LBM requires this for reliable re-arm. */
         if( producer_pending )
         {
             producer_pending = false;
             if( tracker_scan_status == 0 )
             {
+                smtc_modem_alarm_clear_timer( );
                 schedule_producer( 1 );
             }
         }

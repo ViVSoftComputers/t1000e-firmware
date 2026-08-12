@@ -42,6 +42,7 @@ hal_gpio_irq_t app_button_irq = {
 extern uint8_t tracker_test_mode;
 extern uint8_t app_beep_state;
 extern uint8_t app_led_state;
+extern uint8_t tracker_scan_status;  /* v25: busy check */
 
 void app_button_irq_handler( void *obj )
 {
@@ -110,6 +111,20 @@ void app_user_button_event_timeout_handler( void *p_context )
                 if( ble_adv_flag == true )  // skip it when on ble adv mode
                 {
                     PRINTF( "BLE_ADV, SKIP_IT\r\n" );
+                    return;
+                }
+
+                /* v25: Check if producer is already busy before beeping.
+                 * If scan is running, fail immediately with error beep. */
+                if( tracker_scan_status != 0 )
+                {
+                    hal_pwm_init( 2000 );
+                    hal_beep_on( ); hal_mcu_wait_ms( 40 );
+                    hal_beep_off( ); hal_mcu_wait_ms( 40 );
+                    hal_beep_on( ); hal_mcu_wait_ms( 40 );
+                    hal_beep_off( );
+                    hal_pwm_deinit( );
+                    PRINTF( "SCAN_BUSY, SKIP_IT\r\n" );
                     return;
                 }
 
