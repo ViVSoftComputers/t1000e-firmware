@@ -43,6 +43,11 @@ extern uint8_t tracker_test_mode;
 extern uint8_t app_beep_state;
 extern uint8_t app_led_state;
 extern uint8_t tracker_scan_status;  /* v25: busy check */
+extern uint8_t event_state;
+extern uint8_t scan_result_num;
+extern uint8_t event_state;
+extern uint8_t scan_result_num;
+extern uint32_t tracker_periodic_interval;
 
 void app_button_irq_handler( void *obj )
 {
@@ -115,17 +120,36 @@ void app_user_button_event_timeout_handler( void *p_context )
                 }
 
                 /* v25: Check if producer is already busy before beeping.
-                 * If scan is running, fail immediately with error beep. */
+                 * If scan running but stuck >60s, force-reset and proceed.
+                 * Otherwise, fail immediately with error beep. */
                 if( tracker_scan_status != 0 )
                 {
-                    hal_pwm_init( 2000 );
-                    hal_beep_on( ); hal_mcu_wait_ms( 40 );
-                    hal_beep_off( ); hal_mcu_wait_ms( 40 );
-                    hal_beep_on( ); hal_mcu_wait_ms( 40 );
-                    hal_beep_off( );
-                    hal_pwm_deinit( );
-                    PRINTF( "SCAN_BUSY, SKIP_IT\r\n" );
-                    return;
+                    static uint32_t stuck_noticed = 0;
+                    static uint8_t prev_status = 0;
+                    uint32_t now = hal_rtc_get_time_s( );
+                    if( tracker_scan_status != prev_status )
+                    {
+                        prev_status = tracker_scan_status;
+                        stuck_noticed = now;
+                    }
+                    if(( now - stuck_noticed ) > 60 )
+                    {
+                        tracker_scan_status = 0;
+                        scan_result_num = 0;
+                        event_state = 0;
+                        PRINTF( "SCAN_STUCK_RESET, proceeding\r\n" );
+                    }
+                    else
+                    {
+                        hal_pwm_init( 2000 );
+                        hal_beep_on( ); hal_mcu_wait_ms( 40 );
+                        hal_beep_off( ); hal_mcu_wait_ms( 40 );
+                        hal_beep_on( ); hal_mcu_wait_ms( 40 );
+                        hal_beep_off( );
+                        hal_pwm_deinit( );
+                        PRINTF( "SCAN_BUSY, SKIP_IT\r\n" );
+                        return;
+                    }
                 }
 
                 smtc_modem_status_mask_t modem_status;

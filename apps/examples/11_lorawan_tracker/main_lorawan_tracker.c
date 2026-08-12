@@ -180,6 +180,7 @@ static void on_modem_network_joined( void );
  * @brief Alarm event callback
  */
 static void on_modem_alarm( void );
+static void stuck_scan_watchdog( void );
 
 /*!
  * @brief Tx done event callback
@@ -345,6 +346,10 @@ APP_MAIN:
         }
         /* Execute modem runtime, this function must be called again in sleep_time_ms milliseconds or sooner. */
         uint32_t sleep_time_ms = smtc_modem_run_engine( );
+
+        /* Dead-man switch: reset stuck scan even if alarm didn't fire */
+        stuck_scan_watchdog( );
+
         /* go in low power */
         hal_mcu_set_sleep_for_ms( sleep_time_ms );
     }
@@ -631,6 +636,29 @@ static void on_modem_network_joined( void )
     schedule_producer( 15 );
 }
 
+/* Dead-man switch: if tracker_scan_status gets stuck non-zero
+ * (alarm missed, GPS hang, etc.), force-reset after 60s.
+ * Called from on_modem_alarm() (safe context) and main loop. */
+static void stuck_scan_watchdog( void )
+{
+    static uint32_t stuck_since = 0;
+    static uint8_t prev_status = 0;
+    uint32_t now = hal_rtc_get_time_s( );
+
+    if( tracker_scan_status != prev_status )
+    {
+        prev_status = tracker_scan_status;
+        stuck_since = now;
+    }
+    if( tracker_scan_status != 0 && ( now - stuck_since ) > 60 )
+    {
+        tracker_scan_status = 0;
+        scan_result_num = 0;
+        event_state = 0;
+        schedule_producer( tracker_periodic_interval );
+    }
+}
+
 static void on_modem_alarm( void )
 {
     uint32_t now = hal_rtc_get_time_s( );
@@ -679,8 +707,8 @@ static void on_modem_alarm( void )
         }
     }
 
-    /* Producer: scan if its timer expired */
-    if( now >= producer_next_s )
+    /* Producer: scan if its timer expired AND no scan is running */
+    if( now >= producer_next_s && tracker_scan_status == 0 )
     {
         app_tracker_scan_process( );
         /* scan process calls schedule_producer() for next producer tick */
@@ -688,6 +716,9 @@ static void on_modem_alarm( void )
 
     /* Always re-arm alarm to the sooner of the two timers */
     sync_alarm( );
+
+    /* Dead-man switch: reset stuck scan state */
+    stuck_scan_watchdog( );
 }
 
 
