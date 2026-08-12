@@ -136,7 +136,6 @@ static uint32_t consumer_next_s = 0;  /* absolute RTC seconds */
 
 uint8_t event_state = 0;
   /* queued presses during scan */
-static bool producer_pending = false;   /* ISR-safe kick flag */
 
 /*
  * -----------------------------------------------------------------------------
@@ -332,18 +331,6 @@ APP_MAIN:
 
     while( 1 )
     {
-        /* ISR-safe producer kick: button ISR sets producer_pending,
-         * we call schedule_producer() here in main-loop context.
-         * Clear old alarm first — LBM requires this for reliable re-arm. */
-        if( producer_pending )
-        {
-            producer_pending = false;
-            if( tracker_scan_status == 0 )
-            {
-                smtc_modem_alarm_clear_timer( );
-                schedule_producer( 1 );
-            }
-        }
         /* Execute modem runtime, this function must be called again in sleep_time_ms milliseconds or sooner. */
         uint32_t sleep_time_ms = smtc_modem_run_engine( );
 
@@ -1558,10 +1545,11 @@ void app_tracker_new_run( uint8_t event )
         return;
     }
     event_state = event;
-    if( tracker_scan_status == 0 ) // Not tracking — flag for main loop
+    if( tracker_scan_status == 0 )
     {
-        producer_pending = true;
-        hal_sleep_exit( );  /* wake CPU so main loop picks up the flag */
+        smtc_modem_alarm_clear_timer( );
+        schedule_producer( 1 );
+        hal_sleep_exit( );
     }
 }
 
