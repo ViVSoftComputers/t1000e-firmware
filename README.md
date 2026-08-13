@@ -27,26 +27,43 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 2. Drag `t1000-e-v25.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
-## v25 Button Behavior
+## v26 Button Behavior
 
 | Press | Action | Beep Feedback |
 |---|---|---|
-| **Single-press** | Trigger immediate scan (fast 5s polling, 30s timeout) | Ack beep if idle · 3 short = GPS fix · 2 long = no fix · 1 long = timeout · double-error-beep if busy |
-| **Double-press** | Toggle **turbo mode** (~1min scans, fast polling) | 500ms long beep on enter · 500ms long beep on exit |
+| **Single-press** | Trigger immediate scan (fast 5s polling, 30s timeout) | Ack beep if idle · 3 short (+green flash) = GPS fix · 2 long (+red flash) = no fix · 1 long (+red flash) = timeout · double-error-beep if busy |
+| **Double-press** | Toggle **turbo mode** (~1min scans, fast polling) | 2 short high-pitched beeps on enter · 2 short low-pitched beeps on exit |
 | **Triple-press** | BLE advertising | — |
-| **Quad-press** | **Force drain all cached entries** | 500ms long beep when complete |
+| **Quad-press** | **Force drain all cached entries** | 3 quick beeps on start · rising two-tone chirp on complete |
 | **Long-press** (3s) | Power off | Power-off melody |
 
 ### Beep Reference
+
+Every pattern below is now unique — no two events share the same sound. (Prior to v26, turbo-enter, turbo-exit, force-drain-start, force-drain-complete, and GPS-timeout all played an identical single 500ms beep.)
 
 | Pattern | Meaning |
 |---|---|
 | **Single 40ms** | Button press acknowledged — scan starting |
 | **Double 40ms** (quick) | **Busy — scan already running, try again later** |
-| **3 short** (80ms) | GPS fix acquired — position saved to cache |
-| **2 long** (500ms) | No GPS fix after scan duration |
-| **1 long** (500ms) | **Hard timeout** — GPS failed to acquire in 30s |
-| **500ms** | Turbo toggle or force-drain complete |
+| **3 short** (80ms, 2kHz) | GPS fix acquired — position saved to cache |
+| **2 long** (500ms, 2kHz) | No GPS fix after scan duration |
+| **1 long** (500ms, 2kHz) | **Hard timeout** — GPS failed to acquire in 30s |
+| **2 short, high pitch** (2.6kHz) | Turbo mode entered |
+| **2 short, low pitch** (1.2kHz) | Turbo mode exited |
+| **3 quick** (60ms, 1.6kHz) | Force-drain started |
+| **Two-tone rising chirp** (1.2kHz → 2.4kHz) | Force-drain completed |
+
+### LED Reference
+
+The board has a red/green LED, no dimming. LEDs now do two jobs: a **momentary flash synced to a beep** (reinforces the sound, e.g. outdoors), and a **persistent indicator for ongoing state** (something a beep — which is over in a moment — can't do).
+
+| LED behavior | Meaning |
+|---|---|
+| 3 green flashes, synced with the GPS-fix beeps | GPS fix acquired |
+| 2 red flashes, synced with the no-fix beeps | No GPS fix |
+| 1 red flash, synced with the timeout beep | Hard timeout |
+| **Solid red** | **Turbo mode is currently active** — stays lit the whole time, not just at the toggle moment. Suppresses the charge-status indicator (also on red) while on. |
+| **Fast green blink** (150ms) | **A drain chain is actively running** — from the first entry to the last, not per-entry (no flicker between sends) |
 
 ### Single-Press Flow (Fast Polling)
 
@@ -67,10 +84,10 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 - Double-press again to exit and restore previous scan interval
 
 ### Force Drain (Quad-Press)
-- Press 4× rapidly → consumer fast-drains all cached entries
+- Press 4× rapidly → consumer fast-drains all cached entries; green LED blinks fast for the whole chain
 - In range: entries drain at 3s intervals via confirmed uplinks
 - Out of range: one attempt, then stops
-- Cache empty → 500ms beep — works immediately even with no entries
+- Cache empty → completion chirp plays immediately — works even with no entries
 - Useful for flushing cached data immediately
 
 ### Mutual Exclusion

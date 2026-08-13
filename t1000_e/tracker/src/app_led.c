@@ -57,6 +57,12 @@ static uint32_t led_start = 0;
 
 uint8_t app_led_state = APP_LED_IDLE;
 
+/* Solid red turbo indicator. Deliberately kept outside app_led_state —
+ * it's a persistent status on its own LED, not a transient green-LED
+ * animation, so it must not get clobbered by (or clobber) whatever
+ * app_led_state is doing. See app_led_turbo_indicator(). */
+static bool turbo_indicator_active = false;
+
 static void hal_pwm_handler( nrf_drv_pwm_evt_type_t event_type )
 {
     if( event_type == NRF_DRV_PWM_EVT_FINISHED )
@@ -213,6 +219,25 @@ void app_user_led_event_timeout_handler( void *p_context )
         }
         break;
 
+        case APP_LED_DRAIN_ACTIVE:
+        {
+            /* Fast even blink for as long as a drain chain is running —
+             * deliberately distinct cadence from every other pattern here. */
+            if( led_step )
+            {
+                led_step = false;
+                hal_gpio_init_out( USER_LED_G, HAL_GPIO_RESET );
+                app_timer_start( m_led_event_timer_id,  APP_TIMER_TICKS( 150 ), NULL );
+            }
+            else
+            {
+                led_step = true;
+                hal_gpio_init_out( USER_LED_G, HAL_GPIO_SET );
+                app_timer_start( m_led_event_timer_id,  APP_TIMER_TICKS( 150 ), NULL );
+            }
+        }
+        break;
+
         case APP_LED_IDLE:
         {
             hal_gpio_init_out( USER_LED_G, HAL_GPIO_RESET );
@@ -278,6 +303,39 @@ void app_led_idle( void )
     app_led_state = APP_LED_IDLE;
 }
 
+void app_led_drain_start( void )
+{
+    led_step = true;
+    app_led_state = APP_LED_DRAIN_ACTIVE;
+    hal_gpio_init_out( USER_LED_G, HAL_GPIO_SET );
+    app_timer_start( m_led_event_timer_id,  APP_TIMER_TICKS( 150 ), NULL );
+}
+
+void app_led_drain_stop( void )
+{
+    hal_gpio_init_out( USER_LED_G, HAL_GPIO_RESET );
+    app_timer_stop( m_led_event_timer_id );
+    app_led_state = APP_LED_IDLE;
+}
+
+void app_led_turbo_indicator( bool on )
+{
+    turbo_indicator_active = on;
+    hal_gpio_set_value( USER_LED_R, on ? 1 : 0 );
+}
+
+void app_led_flash( bool red, uint8_t count, uint16_t on_ms, uint16_t off_ms )
+{
+    uint32_t pin = red ? USER_LED_R : USER_LED_G;
+    for( uint8_t i = 0; i < count; i++ )
+    {
+        hal_gpio_init_out( pin, HAL_GPIO_SET );
+        hal_mcu_wait_ms( on_ms );
+        hal_gpio_init_out( pin, HAL_GPIO_RESET );
+        if( ( i + 1 ) < count ) hal_mcu_wait_ms( off_ms );
+    }
+}
+
 void app_user_bat_event_timeout_handler( void *p_context )
 {
     (void)p_context;
@@ -291,6 +349,14 @@ void app_user_bat_event_timeout_handler( void *p_context )
     smtc_modem_status_mask_t modem_status;
     smtc_modem_get_status( 0, &modem_status );
     if(( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
+    {
+        return;
+    }
+
+    /* Turbo's solid red indicator owns USER_LED_R while active — charge
+     * status is suppressed rather than fighting it for the pin, same
+     * as it's already suppressed by any non-idle app_led_state. */
+    if( turbo_indicator_active )
     {
         return;
     }
@@ -322,7 +388,7 @@ void app_user_bat_event_timeout_handler( void *p_context )
     else
     {
         hal_gpio_set_value( USER_LED_R, 0 );
-    }    
+    }
 }
 
 void app_led_bat_new_detect( uint32_t time )

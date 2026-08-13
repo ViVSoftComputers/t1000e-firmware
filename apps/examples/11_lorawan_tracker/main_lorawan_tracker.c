@@ -718,10 +718,15 @@ static void process_pending_button_action( void )
         case BUTTON_ACTION_TURBO_TOGGLE:
         {
             app_tracker_turbo_toggle( );
-            /* Long beep confirms either enter or exit */
-            hal_pwm_init( 2000 );
-            hal_beep_on( );
-            hal_mcu_wait_ms( 500 );
+            /* Two short beeps, pitch tells you which way it went — high
+             * on entry, low on exit — instead of the old identical
+             * 500ms beep for both. The solid red LED (see
+             * app_tracker_turbo_toggle()) is the real "is turbo on"
+             * answer; this is just the transition confirmation. */
+            hal_pwm_init( app_tracker_is_turbo( ) ? 2600 : 1200 );
+            hal_beep_on( ); hal_mcu_wait_ms( 100 );
+            hal_beep_off( ); hal_mcu_wait_ms( 80 );
+            hal_beep_on( ); hal_mcu_wait_ms( 100 );
             hal_beep_off( );
             hal_pwm_deinit( );
             break;
@@ -729,12 +734,18 @@ static void process_pending_button_action( void )
 
         case BUTTON_ACTION_FORCE_DRAIN:
         {
-            /* Long beep: drain starting. Completion beep fires later,
-             * from on_modem_tx_done()/on_modem_alarm() when cache empties. */
-            hal_pwm_init( 2000 );
-            hal_beep_on( );
-            hal_mcu_wait_ms( 500 );
-            hal_beep_off( );
+            /* Three quick beeps: drain starting. Was a single 500ms
+             * beep, indistinguishable from turbo-toggle, GPS timeout,
+             * and drain-complete — now its own distinct pitch/rhythm.
+             * Completion beep fires later, from
+             * on_modem_tx_done()/on_modem_alarm() when cache empties. */
+            hal_pwm_init( 1600 );
+            for ( uint8_t i = 0; i < 3; i++ )
+            {
+                hal_beep_on( ); hal_mcu_wait_ms( 60 );
+                hal_beep_off( );
+                if ( i < 2 ) hal_mcu_wait_ms( 60 );
+            }
             hal_pwm_deinit( );
             app_tracker_force_drain( );
             break;
@@ -743,6 +754,23 @@ static void process_pending_button_action( void )
         default:
             break;
     }
+}
+
+/* Force-drain complete: rising two-tone chirp. Was a single 500ms beep
+ * shared with turbo-toggle, drain-start, and GPS timeout — now its own
+ * sound. Called from both places a drain chain can end with force-drain
+ * pending: on_modem_alarm() (nothing to send) and on_modem_tx_done()
+ * (cache emptied after the last confirmed uplink). */
+static void beep_force_drain_complete( void )
+{
+    hal_pwm_init( 1200 );
+    hal_beep_on( ); hal_mcu_wait_ms( 120 );
+    hal_beep_off( );
+    hal_pwm_deinit( );
+    hal_pwm_init( 2400 );
+    hal_beep_on( ); hal_mcu_wait_ms( 120 );
+    hal_beep_off( );
+    hal_pwm_deinit( );
 }
 
 static void on_modem_alarm( void )
@@ -765,11 +793,7 @@ static void on_modem_alarm( void )
             if( force_drain_pending )
             {
                 force_drain_pending = false;
-                hal_pwm_init( 2000 );
-                hal_beep_on( );
-                hal_mcu_wait_ms( 500 );
-                hal_beep_off( );
-                hal_pwm_deinit( );
+                beep_force_drain_complete( );
             }
             schedule_consumer( tracker_drain_interval );
         }
@@ -784,6 +808,7 @@ static void on_modem_alarm( void )
             {
                 cache_drain_active = false;   /* force timeout */
                 drain_overall_start_s = 0;    /* reset for next drain chain */
+                app_led_drain_stop( );
                 schedule_consumer( tracker_drain_interval );
             }
             else
@@ -831,13 +856,10 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
             if( force_drain_pending )
             {
                 force_drain_pending = false;
-                hal_pwm_init( 2000 );
-                hal_beep_on( );
-                hal_mcu_wait_ms( 500 );
-                hal_beep_off( );
-                hal_pwm_deinit( );
+                beep_force_drain_complete( );
             }
             drain_overall_start_s = 0;
+            app_led_drain_stop( );
             schedule_consumer( tracker_drain_interval );
         }
     }
@@ -845,6 +867,7 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
     {
         /* Out of range (SENT/NOT_SENT) — stop, retry next schedule. */
         drain_overall_start_s = 0;
+        app_led_drain_stop( );
         cache_drain_active = false;
         if( tracker_cache_count( ) == 0 )
         {
@@ -868,6 +891,7 @@ static void cache_consumer_trigger( void )
             if( drain_overall_start_s == 0 )
             {
                 drain_overall_start_s = hal_rtc_get_time_s( );  /* drain chain start */
+                app_led_drain_start( );  /* fires once per chain, not per entry */
             }
             /* Use CONFIRMED — only pop on real ACK */
             if( !app_send_frame( entry, entry_len, true, false ) )
@@ -1230,7 +1254,7 @@ static void app_tracker_scan_result_send( void )
         {
             if ( gps_had_fix )
             {
-                /* GPS fix — 3 short beeps */
+                /* GPS fix — 3 short beeps + matching green flashes */
                 hal_pwm_init( 2000 );
                 for ( uint8_t i = 0; i < 3; i++ )
                 {
@@ -1240,10 +1264,11 @@ static void app_tracker_scan_result_send( void )
                     if ( i < 2 ) hal_mcu_wait_ms( 120 );
                 }
                 hal_pwm_deinit( );
+                app_led_flash( false, 3, 80, 120 );
             }
             else
             {
-                /* No GPS fix — 2 long beeps */
+                /* No GPS fix — 2 long beeps + matching red flashes */
                 hal_pwm_init( 2000 );
                 for ( uint8_t i = 0; i < 2; i++ )
                 {
@@ -1253,6 +1278,7 @@ static void app_tracker_scan_result_send( void )
                     if ( i < 1 ) hal_mcu_wait_ms( 200 );
                 }
                 hal_pwm_deinit( );
+                app_led_flash( true, 2, 500, 200 );
             }
         }
         else if ( turbo_active )
@@ -1332,12 +1358,13 @@ static void app_tracker_scan_process( void )
                  * Clean up here directly; skip result_send to avoid
                  * double-beeping (timeout + no-fix from same scan). */
                 app_tracker_gnss_scan_end( );
-                /* Distinctive 500ms beep — timeout feedback */
+                /* Distinctive 500ms beep + single red flash — timeout feedback */
                 hal_pwm_init( 2000 );
                 hal_beep_on( );
                 hal_mcu_wait_ms( 500 );
                 hal_beep_off( );
                 hal_pwm_deinit( );
+                app_led_flash( true, 1, 500, 0 );
                 /* Reset and reschedule */
                 event_state = 0;
                 tracker_scan_status = 0;
@@ -1712,6 +1739,7 @@ void app_tracker_turbo_toggle( void )
         /* Exit turbo — restore saved interval */
         tracker_periodic_interval = saved_periodic_interval;
         turbo_active = false;
+        app_led_turbo_indicator( false );
         /* Kick drain, but don't interrupt a running scan */
         if( tracker_scan_status != 1 )
         {
@@ -1724,6 +1752,7 @@ void app_tracker_turbo_toggle( void )
         saved_periodic_interval = tracker_periodic_interval;
         tracker_periodic_interval = 60;
         turbo_active = true;
+        app_led_turbo_indicator( true );
         /* Kick off first turbo scan immediately (2s delay for beep to finish) */
         schedule_producer( 2 );
     }
