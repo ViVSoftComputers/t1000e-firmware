@@ -334,6 +334,14 @@ void app_led_flash( bool red, uint8_t count, uint16_t on_ms, uint16_t off_ms )
         hal_gpio_init_out( pin, HAL_GPIO_RESET );
         if( ( i + 1 ) < count ) hal_mcu_wait_ms( off_ms );
     }
+    /* Red flashes share USER_LED_R with the solid-red turbo indicator.
+     * The loop above always leaves the pin off — restore solid red if
+     * turbo is still active, instead of leaving the indicator dark
+     * until the next toggle. */
+    if( red && turbo_indicator_active )
+    {
+        hal_gpio_set_value( USER_LED_R, 1 );
+    }
 }
 
 void app_user_bat_event_timeout_handler( void *p_context )
