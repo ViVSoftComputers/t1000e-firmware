@@ -70,8 +70,8 @@ The board has a red/green LED, no dimming. LEDs now do two jobs: a **momentary f
 1. Button press → **busy check** — if scan already running, play error beep and bail immediately
 2. If idle → 40ms ack beep → GPS scan starts
 3. **Poll at 5s intervals** — if GPS has fix already, end immediately and beep 3×
-4. No fix yet → poll again in 5s → repeat up to 6 polls (30s total)
-5. **30s hard timeout** → force-end GPS, play 1 long timeout beep, reschedule
+4. No fix yet → poll again in 5s → repeat until fix or hard timeout
+5. **Hard timeout**: 30s once the device has ever gotten a fix since boot (warm start — chip has ephemeris). Before that first-ever fix (cold start — no ephemeris/almanac), the ceiling is 150s instead, since a cold acquisition routinely needs far more than 30s and the GPS chip goes into standby between attempts (see `gnss_scan_stop()`), so short timeouts mean it never gets one uninterrupted shot at it. Every scan type — scheduled, user, turbo — gets the 150s ceiling until the first fix lands, not just the very first attempt.
 6. Data saved to cache (never blocks if drain is running — producer is independent)
 
 **Power efficiency:** GPS only runs during the scan window. Between scans, the device sleeps. Scheduled scans use a one-shot 15s mode — no fast polling, just wake-once-and-save.

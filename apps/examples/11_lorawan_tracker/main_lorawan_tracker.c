@@ -89,6 +89,16 @@ uint32_t ble_scan_duration = 3;             // in second
 uint32_t tracker_periodic_interval = 300;   // 5 min default (changed via downlink)
 uint32_t tracker_drain_interval = 1500;  /* consumer drains every 25 min, independent of scan */
 
+/* GPS timeout ceiling for every scan up to (and including) the first fix
+ * ever achieved since boot. 30s is fine for a warm start — the chip
+ * already has valid ephemeris — but a genuine cold start (first-ever
+ * power-on, no ephemeris/almanac) routinely needs much longer, and
+ * gnss_scan_stop() puts the chip into standby between attempts, so
+ * repeatedly hitting a short timeout means it never gets one
+ * uninterrupted shot at a cold acquisition. Reverts to the normal 30s
+ * ceiling permanently once the first fix lands. */
+uint32_t gnss_cold_start_timeout_s = 150;
+
 /* Turbo mode — double-press toggles 30-second scan interval */
 static bool     turbo_active = false;
 static uint32_t saved_periodic_interval = 60;
@@ -1305,6 +1315,7 @@ static void app_tracker_scan_process( void )
 {
     int32_t next_delay = 0;
     static uint8_t last_status = 0xFF;  /* watchdog: detect stuck state */
+    static bool ever_fixed = false;     /* false until the first GPS fix since boot */
 
     /* Scan stall watchdog: if status hasn't changed for 3 alarm ticks,
      * force-reset to idle. Prevents GNSS/driver hangs from freezing device.
@@ -1330,9 +1341,11 @@ static void app_tracker_scan_process( void )
     {
         if( tracker_scan_status == 0 )
         {
-            /* User scans poll every 5s for fast fix — scheduled scans
-             * use gnss_scan_duration for power efficiency. */
-            uint32_t first_poll = ( event_state == TRACKER_STATE_BIT8_USER || turbo_active )
+            /* User/turbo scans, and any scan before the first-ever fix
+             * (cold start), poll every 5s for a fast/eventual fix.
+             * Scheduled scans after the first fix use gnss_scan_duration
+             * for power efficiency — the chip has ephemeris by then. */
+            uint32_t first_poll = ( event_state == TRACKER_STATE_BIT8_USER || turbo_active || !ever_fixed )
                                   ? 5 : gnss_scan_duration;
             schedule_producer( first_poll );
             HAL_DBG_TRACE_PRINTF( "gnss begin, new alarm %d s\n\n", first_poll );
@@ -1344,17 +1357,23 @@ static void app_tracker_scan_process( void )
         else if( tracker_scan_status == 1 )
         {
             uint32_t gps_elapsed = hal_rtc_get_time_s( ) - gps_scan_start_time;
+            /* Cold start (no fix since boot yet) gets a much longer
+             * ceiling — see gnss_cold_start_timeout_s. Every scan reverts
+             * to the normal 30s warm-start timeout permanently once the
+             * first fix lands, not just the very first attempt. */
+            uint32_t hard_timeout_s = ever_fixed ? 30 : gnss_cold_start_timeout_s;
 
             if( gnss_get_fix_status( ) )
             {
                 /* Got a fix — end immediately, no need to wait */
+                ever_fixed = true;
                 app_tracker_gnss_scan_end( );
                 schedule_producer( 1 );
                 tracker_scan_status = 0xff;
             }
-            else if( gps_elapsed >= 30 )
+            else if( gps_elapsed >= hard_timeout_s )
             {
-                /* Hard timeout — GPS didn't get a fix in 30s.
+                /* Hard timeout — GPS didn't get a fix in time.
                  * Clean up here directly; skip result_send to avoid
                  * double-beeping (timeout + no-fix from same scan). */
                 app_tracker_gnss_scan_end( );
@@ -1369,12 +1388,13 @@ static void app_tracker_scan_process( void )
                 event_state = 0;
                 tracker_scan_status = 0;
                 scan_result_num = 0;
-                schedule_producer( tracker_periodic_interval - 30 );
+                schedule_producer( tracker_periodic_interval > hard_timeout_s ? tracker_periodic_interval - hard_timeout_s : 1 );
             }
-            else if( event_state == TRACKER_STATE_BIT8_USER || turbo_active )
+            else if( event_state == TRACKER_STATE_BIT8_USER || turbo_active || !ever_fixed )
             {
-                /* User/turbo scan: poll again in 5s, GPS still acquiring.
-                 * tracker_scan_status stays 1 — scan continues running. */
+                /* User/turbo scan, or still cold-starting: poll again in
+                 * 5s, GPS still acquiring. tracker_scan_status stays 1 —
+                 * scan continues running. */
                 schedule_producer( 5 );
             }
             else
