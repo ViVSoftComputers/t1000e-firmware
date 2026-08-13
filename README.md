@@ -1,10 +1,10 @@
-# T1000-E Tracker Firmware — v25 Independent Producer/Consumer Edition
+# T1000-E Tracker Firmware — v26
 
-Built: 2026-08-11  
+Built: 2026-08-13  
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v25 is a complete architectural rewrite.** Producer and consumer are fully independent — each has its own timer, own schedule, own watchdog. They share nothing except the ring buffer cache. Producer only touches GPS/sensors and writes to cache. Consumer only touches the LoRa radio and reads from cache. Neither blocks the other.
+> **v26 adds distinct beep patterns and persistent LED feedback** (turbo indicator, drain indicator, GPS-fix flashes) on top of v25's independent producer/consumer architecture. Producer and consumer are fully independent — each has its own timer, own schedule, own watchdog. They share nothing except the ring buffer cache. Producer only touches GPS/sensors and writes to cache. Consumer only touches the LoRa radio and reads from cache. Neither blocks the other.
 
 ## 📖 Read the Full Article
 
@@ -24,7 +24,7 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## Flash
 
 1. Double-press the button to enter UF2 bootloader
-2. Drag `t1000-e-v25.uf2` onto the USB drive
+2. Drag `t1000-e-v26.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
 ## v26 Button Behavior
@@ -110,7 +110,7 @@ Pure motion gate — only cache entries when the device actually moves.
 
 Result: stationary device → empty cache → consumer fires on schedule, finds nothing, waits. Battery and airtime conserved.
 
-## Architecture (v25)
+## Architecture (v26)
 
 ### Core Principle: Complete Separation
 
