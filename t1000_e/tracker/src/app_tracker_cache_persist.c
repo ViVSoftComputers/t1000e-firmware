@@ -15,11 +15,6 @@
  * to a whole number of words itself. */
 #define SLOT_BUF_SIZE   ( 1 + TRACKER_CACHE_MAX_SIZE )
 
-/* How many slots are currently written to flash -- tracked so a
- * shrinking checkpoint (cache drained down) knows which trailing
- * slots to delete rather than leave stale. */
-static uint16_t s_persisted_count = 0;
-
 static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
 {
     uint8_t buf[SLOT_BUF_SIZE];
@@ -49,7 +44,11 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
 
     /* Matches the wait used by write_record_by_desc()/
      * update_record_by_desc() in app_at_fds_datas.c for the same
-     * reason -- give the async FDS event a moment to land. */
+     * reason -- give the async FDS event a moment to land. Fine here:
+     * this only ever runs once, from app_user_power_off(), well after
+     * app_lora_stack_suspend() has already cleared the modem alarm and
+     * left the network -- not from a modem event callback or any
+     * periodic/ticking context. See app_tracker_cache_persist.h. */
     hal_mcu_wait_ms( 8 );
 
     return rc == NRF_SUCCESS;
@@ -97,34 +96,17 @@ void cache_persist_restore( void )
         uint8_t entry_len = buf[0];
         if( entry_len > 0 && entry_len <= TRACKER_CACHE_MAX_SIZE )
         {
-            /* Re-inserted with a fresh RTC timestamp -- the cache's
-             * internal timestamp isn't read by anything downstream
-             * (the meaningful, embedded GPS epoch lives inside the
-             * payload data itself, restored byte-for-byte here). */
             tracker_cache_save( buf + 1, entry_len );
         }
-
-        s_persisted_count = slot + 1;
     }
 }
 
-void cache_persist_tick( void )
+void cache_persist_checkpoint( void )
 {
-    static uint32_t last_checkpointed_generation = 0xFFFFFFFF;  /* force first checkpoint */
-
-    uint32_t generation = tracker_cache_generation( );
-    if( generation == last_checkpointed_generation )
-    {
-        return;  /* nothing changed since the last checkpoint */
-    }
-
-    /* Same defensive GC check write_lfs_file() already does before the
-     * config write -- this path writes far more records, so fragmented
-     * flash matters more here. */
-    waste_detect_recycle( );
-
     uint16_t count = tracker_cache_count( );
     uint16_t persist_count = ( count < CACHE_PERSIST_MAX_SLOTS ) ? count : CACHE_PERSIST_MAX_SLOTS;
+
+    waste_detect_recycle( );
 
     for( uint16_t i = 0; i < persist_count; i++ )
     {
@@ -138,20 +120,16 @@ void cache_persist_tick( void )
         }
         if( !fds_write_slot( i, entry, entry_len ))
         {
-            /* Out of flash space -- stop here. Slots 0..i-1 (the
-             * oldest entries, written first) are already protected;
-             * leave s_persisted_count / last_checkpointed_generation
-             * untouched so the next tick retries from where this
-             * one left off. */
+            /* Out of flash space -- stop here. Slots already written
+             * (the oldest entries, written first) stay protected. */
             return;
         }
     }
 
-    for( uint16_t i = persist_count; i < s_persisted_count; i++ )
+    /* Clean up any slots beyond what we just wrote -- leftovers from a
+     * previous checkpoint that held more entries than this one does. */
+    for( uint16_t i = persist_count; i < CACHE_PERSIST_MAX_SLOTS; i++ )
     {
         fds_delete_slot( i );
     }
-
-    s_persisted_count = persist_count;
-    last_checkpointed_generation = generation;
 }

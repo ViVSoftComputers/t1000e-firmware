@@ -851,9 +851,12 @@ static void on_modem_alarm( void )
     /* Dead-man switch: reset stuck scan state */
     stuck_scan_watchdog( );
 
-    /* Checkpoint the cache to flash if it changed this tick. No-op if
-     * nothing changed since the last checkpoint. */
-    cache_persist_tick( );
+    /* Do NOT call cache_persist_checkpoint() (or anything else that
+     * touches FDS) from here or from on_modem_tx_done(). A prior
+     * T1000-E iteration did that and it broke
+     * smtc_modem_alarm_start_timer() -- one packet after joining, then
+     * silence. See app_tracker_cache_persist.h. The cache checkpoint
+     * only ever runs once, from app_user_power_off(). */
 }
 
 
@@ -869,12 +872,6 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         /* In range — fast drain remaining entries */
         tracker_cache_pop( );
         cache_drain_active = false;
-
-        /* Refresh the flash checkpoint right after a successful pop,
-         * on top of the periodic check in on_modem_alarm() — narrows
-         * the window where a reboot could re-send an already-confirmed
-         * entry from a stale checkpoint. */
-        cache_persist_tick( );
 
         if( tracker_cache_count( ) > 0 )
         {

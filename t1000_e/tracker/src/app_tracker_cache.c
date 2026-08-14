@@ -25,7 +25,6 @@ static cache_entry_t cache_ring[TRACKER_CACHE_MAX_DEPTH];
 static uint16_t      cache_head = 0;   /* next write position */
 static uint16_t      cache_tail = 0;   /* oldest unread position */
 static uint16_t      cache_count = 0;  /* number of valid entries */
-static uint32_t      cache_generation = 0;  /* bumped on every save/pop */
 
 /* -------------------------------------------------------------------------- */
 /* --- PUBLIC FUNCTIONS                                                   --- */
@@ -57,17 +56,11 @@ KEEP void tracker_cache_save( const uint8_t *data, uint8_t len )
         cache_tail = ( cache_tail + 1 ) % TRACKER_CACHE_MAX_DEPTH;
     }
     cache_head = ( cache_head + 1 ) % TRACKER_CACHE_MAX_DEPTH;
-    cache_generation++;
 }
 
 KEEP uint16_t tracker_cache_count( void )
 {
     return cache_count;
-}
-
-KEEP uint32_t tracker_cache_generation( void )
-{
-    return cache_generation;
 }
 
 KEEP uint8_t *tracker_cache_get( uint16_t idx, uint8_t *len, uint32_t *ts )
@@ -92,7 +85,6 @@ KEEP void tracker_cache_pop( void )
     }
     cache_tail = ( cache_tail + 1 ) % TRACKER_CACHE_MAX_DEPTH;
     cache_count--;
-    cache_generation++;
 }
 
 KEEP void tracker_cache_clear( void )

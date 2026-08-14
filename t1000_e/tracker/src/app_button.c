@@ -5,6 +5,7 @@
 #include "app_beep.h"
 #include "app_button.h"
 #include "smtc_modem_api.h"
+#include "app_tracker_cache_persist.h"
 
 /* v25: Button-triggered actions are declared in main_lorawan_tracker.c.
  * Can't include main_lorawan_tracker.h from here (include path issue),
@@ -304,6 +305,12 @@ void app_user_power_off( void )
     // stop lbm
     app_lora_stack_suspend( );
     hal_mcu_wait_ms( 1000 );
+
+    /* Checkpoint the cache to flash now that the modem alarm/network are
+     * suspended -- see app_tracker_cache_persist.h for why this must
+     * never be called from a modem event callback or ticking context. */
+    cache_persist_checkpoint( );
+
     app_radio_set_sleep( );
 
     app_timer_stop( m_ble_adv_event_timer_id );

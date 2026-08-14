@@ -38,13 +38,6 @@ void tracker_cache_save( const uint8_t *data, uint8_t len );
 uint16_t tracker_cache_count( void );
 
 /**
- * @brief Return a counter bumped on every save and every pop.
- * Lets a caller cheaply detect "has the cache changed since I last
- * looked" without diffing contents -- see app_tracker_cache_persist.c.
- */
-uint32_t tracker_cache_generation( void );
-
-/**
  * @brief Get the oldest cached entry by index.
  * Index 0 = oldest, index N-1 = newest.
  * @param[in]  idx   Entry index (0 = oldest)
