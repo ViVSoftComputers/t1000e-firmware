@@ -107,13 +107,15 @@ if os.path.exists(gcc_startup):
     srcs.insert(0, gcc_startup)  # MUST be first — contains the vector table
     print(f"Added GCC startup: {gcc_startup}")
 
-# Add cache system source file
-cache_c = str((PROJECT / "t1000_e" / "tracker" / "src" / "app_tracker_cache.c").resolve())
-if os.path.exists(cache_c) and cache_c not in srcs:
-    srcs.append(cache_c)
-    print(f"Added cache source: {cache_c}")
-else:
-    print(f"Cache source {'exists' if os.path.exists(cache_c) else 'NOT FOUND'}: {cache_c}")
+# Add cache system source files (now also listed in the .emProject, but
+# kept here too as a safety net in case that ever falls out of sync again)
+for cache_src_name in ("app_tracker_cache.c", "app_tracker_cache_persist.c"):
+    cache_c = str((PROJECT / "t1000_e" / "tracker" / "src" / cache_src_name).resolve())
+    if os.path.exists(cache_c) and cache_c not in srcs:
+        srcs.append(cache_c)
+        print(f"Added cache source: {cache_c}")
+    elif not os.path.exists(cache_c):
+        print(f"Cache source NOT FOUND: {cache_c}")
 
 # =========== COMPILER FLAGS ===========
 cpu_flags = ["-mcpu=cortex-m4", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv4-sp-d16"]

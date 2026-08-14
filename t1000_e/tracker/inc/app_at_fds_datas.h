@@ -20,6 +20,10 @@ extern "C" {
 #define CONFIG_FILE2    ( 0x4050 )
 #define CONFIG_REC_KEY2 ( 0x7050 )
 
+/* Cache checkpoint (app_tracker_cache_persist.c). One record per slot,
+ * all under this file_id, keyed 0..CACHE_PERSIST_MAX_SLOTS-1. */
+#define CACHE_CKPT_FILE ( 0x4100 )
+
 typedef struct fds_access // access
 {
     uint16_t config_file;

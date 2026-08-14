@@ -262,6 +262,8 @@
       <file file_name="../../../t1000_e/tracker/src/app_lora_packet.c" />
       <file file_name="../../../t1000_e/tracker/src/app_beep.c" />
       <file file_name="../../../t1000_e/tracker/src/app_led.c" />
+      <file file_name="../../../t1000_e/tracker/src/app_tracker_cache.c" />
+      <file file_name="../../../t1000_e/tracker/src/app_tracker_cache_persist.c" />
     </folder>
     <folder Name="nRF_BLE_Services">
       <file file_name="../../../t1000_e/ble_service/ble_nus/app_ble_nus.c" />

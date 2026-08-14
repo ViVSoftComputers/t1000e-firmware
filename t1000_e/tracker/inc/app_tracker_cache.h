@@ -20,7 +20,7 @@
 #include <stdbool.h>
 
 /* Firmware version - embedded in every uplink */
-#define FIRMWARE_VERSION           26  /* v26: beep/LED feedback + cold-start GPS + drain-reschedule fix */
+#define FIRMWARE_VERSION           27  /* v27: flash-backed cache checkpoint (survives power-off) */
 
 #define TRACKER_CACHE_MAX_DEPTH   1000   /* ~166h of 10-min intervals */
 #define TRACKER_CACHE_MAX_SIZE    128   /* max LoRaWAN payload size */
@@ -36,6 +36,13 @@ void tracker_cache_save( const uint8_t *data, uint8_t len );
  * @brief Return the number of cached entries.
  */
 uint16_t tracker_cache_count( void );
+
+/**
+ * @brief Return a counter bumped on every save and every pop.
+ * Lets a caller cheaply detect "has the cache changed since I last
+ * looked" without diffing contents -- see app_tracker_cache_persist.c.
+ */
+uint32_t tracker_cache_generation( void );
 
 /**
  * @brief Get the oldest cached entry by index.

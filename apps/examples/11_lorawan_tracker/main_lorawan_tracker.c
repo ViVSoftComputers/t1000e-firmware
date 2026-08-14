@@ -29,6 +29,7 @@
 #include "app_led.h"
 #include "app_beep.h"
 #include "app_tracker_cache.h"
+#include "app_tracker_cache_persist.h"
 
 /* Forward declaration — declared in smtc_modem.c but not in smtc_modem_api.h */
 extern smtc_modem_return_code_t smtc_modem_set_region_duty_cycle( uint8_t stack_id, bool status );
@@ -307,6 +308,11 @@ int main( void )
     /* Init board and peripherals */
     hal_mcu_init( );
     fds_init_write( );
+
+    /* Replay any flash-checkpointed cache entries from before a
+     * power-off/reset, before anything else touches the cache. */
+    cache_persist_restore( );
+
     smtc_board_init_periph( );
     app_lora_packet_params_load( );
 
@@ -844,6 +850,10 @@ static void on_modem_alarm( void )
 
     /* Dead-man switch: reset stuck scan state */
     stuck_scan_watchdog( );
+
+    /* Checkpoint the cache to flash if it changed this tick. No-op if
+     * nothing changed since the last checkpoint. */
+    cache_persist_tick( );
 }
 
 
@@ -859,6 +869,12 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
         /* In range — fast drain remaining entries */
         tracker_cache_pop( );
         cache_drain_active = false;
+
+        /* Refresh the flash checkpoint right after a successful pop,
+         * on top of the periodic check in on_modem_alarm() — narrows
+         * the window where a reboot could re-send an already-confirmed
+         * entry from a stale checkpoint. */
+        cache_persist_tick( );
 
         if( tracker_cache_count( ) > 0 )
         {
