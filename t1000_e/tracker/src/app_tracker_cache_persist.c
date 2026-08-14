@@ -15,6 +15,18 @@
  * to a whole number of words itself. */
 #define SLOT_BUF_SIZE   ( 1 + TRACKER_CACHE_MAX_SIZE )
 
+/* FDS_RECORD_KEY_DIRTY is 0x0000 -- reserved by FDS to mark a deleted
+ * record, and fds_record_write() rejects it (FDS_ERR_INVALID_ARG) if
+ * used as a real key. Using the raw slot index (0..CACHE_PERSIST_MAX_SLOTS-1)
+ * as the key meant slot 0 -- always the first slot touched whenever
+ * there's anything to persist -- silently failed to even queue, every
+ * time, for every checkpoint attempt. This is why nothing ever came
+ * back across three prior "fixes" aimed at completion-checking: the
+ * write was being rejected before any of that logic ran. Found via an
+ * actual serial trace, not source review. Offset by 1 so real keys are
+ * 1..CACHE_PERSIST_MAX_SLOTS, never touching the reserved value. */
+#define CACHE_SLOT_KEY( slot )   ( ( uint16_t )( ( slot ) + 1 ) )
+
 /* fds_record_write()/update()/delete() return NRF_SUCCESS when the
  * operation is successfully *queued* -- completion is asynchronous,
  * confirmed only via an FDS event. app_at_fds_datas.c's fds_evt_handler
@@ -72,7 +84,7 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
     fds_record_t record =
     {
         .file_id = CACHE_CKPT_FILE,
-        .key     = slot,
+        .key     = CACHE_SLOT_KEY( slot ),
         .data.p_data       = ( char * )buf,
         .data.length_words = ( 1 + len + 3 ) / 4,
     };
@@ -80,7 +92,7 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
     fds_record_desc_t desc = { 0 };
     fds_find_token_t  tok  = { 0 };
     ret_code_t rc;
-    bool is_update = ( fds_record_find( CACHE_CKPT_FILE, slot, &desc, &tok ) == NRF_SUCCESS );
+    bool is_update = ( fds_record_find( CACHE_CKPT_FILE, CACHE_SLOT_KEY( slot ), &desc, &tok ) == NRF_SUCCESS );
 
     s_op_done   = false;
     s_op_result = false;
@@ -108,7 +120,7 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
     fds_find_token_t   verify_tok  = { 0 };
     fds_flash_record_t flash_record = { 0 };
 
-    if( fds_record_find( CACHE_CKPT_FILE, slot, &verify_desc, &verify_tok ) != NRF_SUCCESS )
+    if( fds_record_find( CACHE_CKPT_FILE, CACHE_SLOT_KEY( slot ), &verify_desc, &verify_tok ) != NRF_SUCCESS )
     {
         PRINTF( "cache_persist: slot %d verify find FAILED\r\n", slot );
         return false;
@@ -135,7 +147,7 @@ static void fds_delete_slot( uint16_t slot )
     fds_record_desc_t desc = { 0 };
     fds_find_token_t  tok  = { 0 };
 
-    if( fds_record_find( CACHE_CKPT_FILE, slot, &desc, &tok ) == NRF_SUCCESS )
+    if( fds_record_find( CACHE_CKPT_FILE, CACHE_SLOT_KEY( slot ), &desc, &tok ) == NRF_SUCCESS )
     {
         s_op_done   = false;
         s_op_result = false;
@@ -167,7 +179,7 @@ void cache_persist_restore( void )
         fds_find_token_t   tok  = { 0 };
         fds_flash_record_t flash_record = { 0 };
 
-        if( fds_record_find( CACHE_CKPT_FILE, slot, &desc, &tok ) != NRF_SUCCESS )
+        if( fds_record_find( CACHE_CKPT_FILE, CACHE_SLOT_KEY( slot ), &desc, &tok ) != NRF_SUCCESS )
         {
             break;  /* first gap -- end of the persisted run */
         }
