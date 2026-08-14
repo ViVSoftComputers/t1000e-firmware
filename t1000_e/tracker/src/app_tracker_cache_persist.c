@@ -6,6 +6,13 @@
 
 #include <string.h>
 #include "fds.h"
+
+/* sd_app_evt_wait() -- same conditional include app_at_fds_datas.c
+ * uses to get it, for the same reason. */
+#ifdef SOFTDEVICE_PRESENT
+#include "nrf_soc.h"
+#endif
+
 #include "smtc_hal.h"
 #include "app_at_fds_datas.h"
 #include "app_tracker_cache.h"
@@ -14,6 +21,48 @@
 /* Slot record layout in flash: [len:1 byte][data:len bytes], FDS pads
  * to a whole number of words itself. */
 #define SLOT_BUF_SIZE   ( 1 + TRACKER_CACHE_MAX_SIZE )
+
+/* fds_record_write()/update()/delete() return NRF_SUCCESS when the
+ * operation is successfully *queued* -- completion is asynchronous,
+ * confirmed only via an FDS event. app_at_fds_datas.c's fds_evt_handler
+ * already tracks this, but its fds_opt_status is static (file-private),
+ * so this module registers its own handler rather than reaching into
+ * that one. Bounded wait, matching the pattern waste_detect_recycle()
+ * already uses for GC completion (sd_app_evt_wait() loop) -- not the
+ * fixed-delay-then-hope pattern, which is exactly what let writes
+ * silently not land in the first version of this file. */
+#define FDS_OP_WAIT_MAX_ITER   1000
+
+static bool volatile s_op_done   = false;
+static bool volatile s_op_result = false;
+static bool          s_handler_registered = false;
+
+static void cache_persist_fds_evt_handler( fds_evt_t const *p_evt )
+{
+    switch( p_evt->id )
+    {
+        case FDS_EVT_WRITE:
+        case FDS_EVT_UPDATE:
+        case FDS_EVT_DEL_RECORD:
+            s_op_result = ( p_evt->result == NRF_SUCCESS );
+            s_op_done   = true;
+            break;
+
+        default:
+            break;
+    }
+}
+
+static bool fds_wait_for_op( void )
+{
+    uint32_t guard = 0;
+    while( !s_op_done && guard < FDS_OP_WAIT_MAX_ITER )
+    {
+        sd_app_evt_wait( );
+        guard++;
+    }
+    return s_op_done && s_op_result;
+}
 
 static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
 {
@@ -33,6 +82,9 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
     fds_find_token_t  tok  = { 0 };
     ret_code_t rc;
 
+    s_op_done   = false;
+    s_op_result = false;
+
     if( fds_record_find( CACHE_CKPT_FILE, slot, &desc, &tok ) == NRF_SUCCESS )
     {
         rc = fds_record_update( &desc, &record );
@@ -41,17 +93,12 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
     {
         rc = fds_record_write( &desc, &record );
     }
+    if( rc != NRF_SUCCESS )
+    {
+        return false;  /* failed to even queue -- e.g. genuinely out of space */
+    }
 
-    /* Matches the wait used by write_record_by_desc()/
-     * update_record_by_desc() in app_at_fds_datas.c for the same
-     * reason -- give the async FDS event a moment to land. Fine here:
-     * this only ever runs once, from app_user_power_off(), well after
-     * app_lora_stack_suspend() has already cleared the modem alarm and
-     * left the network -- not from a modem event callback or any
-     * periodic/ticking context. See app_tracker_cache_persist.h. */
-    hal_mcu_wait_ms( 8 );
-
-    return rc == NRF_SUCCESS;
+    return fds_wait_for_op( );
 }
 
 static void fds_delete_slot( uint16_t slot )
@@ -61,14 +108,28 @@ static void fds_delete_slot( uint16_t slot )
 
     if( fds_record_find( CACHE_CKPT_FILE, slot, &desc, &tok ) == NRF_SUCCESS )
     {
-        fds_record_delete( &desc );
-        hal_mcu_wait_ms( 8 );
+        s_op_done   = false;
+        s_op_result = false;
+        if( fds_record_delete( &desc ) == NRF_SUCCESS )
+        {
+            fds_wait_for_op( );
+        }
     }
 }
 
 void cache_persist_restore( void )
 {
     uint8_t buf[SLOT_BUF_SIZE];
+
+    /* Register once, here, at boot -- long before cache_persist_checkpoint()
+     * could ever be called (that only happens at power-off). FDS supports
+     * multiple registered handlers (FDS_MAX_USERS in sdk_config.h); this
+     * doesn't disturb app_at_fds_datas.c's own registration. */
+    if( !s_handler_registered )
+    {
+        fds_register( cache_persist_fds_evt_handler );
+        s_handler_registered = true;
+    }
 
     for( uint16_t slot = 0; slot < CACHE_PERSIST_MAX_SLOTS; slot++ )
     {
@@ -120,8 +181,10 @@ void cache_persist_checkpoint( void )
         }
         if( !fds_write_slot( i, entry, entry_len ))
         {
-            /* Out of flash space -- stop here. Slots already written
-             * (the oldest entries, written first) stay protected. */
+            /* Write failed to queue (e.g. out of flash space) or timed
+             * out waiting for confirmation -- stop here either way.
+             * Slots already written (the oldest entries, written
+             * first) stay protected. */
             return;
         }
     }
