@@ -875,14 +875,19 @@ static void on_modem_tx_done( smtc_modem_event_txdone_status_t status )
     }
     else
     {
-        /* Out of range (SENT/NOT_SENT) — stop, retry next schedule. */
+        /* Out of range (SENT/NOT_SENT) — stop, retry next schedule.
+         * Unconditional: this is the only place that reschedules
+         * consumer_next_s for this event. Previously gated on the cache
+         * being empty, so a failure with entries still queued (the
+         * normal case while genuinely out of range) left consumer_next_s
+         * stale — the drain would only resume whenever the producer's
+         * own scheduling happened to re-arm the shared alarm, up to a
+         * full scan interval later, instead of the documented 25-minute
+         * backoff. */
         drain_overall_start_s = 0;
         app_led_drain_stop( );
         cache_drain_active = false;
-        if( tracker_cache_count( ) == 0 )
-        {
-            schedule_consumer( tracker_drain_interval );
-        }
+        schedule_consumer( tracker_drain_interval );
     }
 }
 
