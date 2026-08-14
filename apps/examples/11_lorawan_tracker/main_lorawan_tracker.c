@@ -297,6 +297,10 @@ int main( void )
         .upload_done           = NULL,
     };
 
+    /* Capture the reset reason from the previous boot before anything can
+     * clobber RESETREAS — reported in the power-on uplink for diagnostics. */
+    app_lora_packet_capture_reset_reason( );
+
     /* Initialise the ralf_t object corresponding to the board */
     modem_radio = smtc_board_initialise_and_get_ralf( );
 

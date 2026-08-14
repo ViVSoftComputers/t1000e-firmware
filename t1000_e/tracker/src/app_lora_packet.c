@@ -5,6 +5,7 @@
 
 
 #include "smtc_hal.h"
+#include "nrf.h"
 #include "sensor.h"
 #include "app_board.h"
 #include "app_config_param.h"
@@ -39,6 +40,21 @@ extern uint8_t packet_policy;
 
 extern uint8_t tracker_test_mode;
 
+/* Reset reason captured at boot (see app_lora_packet_capture_reset_reason). */
+static uint8_t s_reset_reason = RESET_REASON_NONE;
+
+void app_lora_packet_capture_reset_reason( void )
+{
+    uint32_t rr = NRF_POWER->RESETREAS;
+    if( rr & POWER_RESETREAS_DOG_Msk )           s_reset_reason = RESET_REASON_WATCHDOG;
+    else if( rr & POWER_RESETREAS_LOCKUP_Msk )   s_reset_reason = RESET_REASON_LOCKUP;
+    else if( rr & POWER_RESETREAS_SREQ_Msk )     s_reset_reason = RESET_REASON_SOFT;
+    else if( rr & POWER_RESETREAS_RESETPIN_Msk ) s_reset_reason = RESET_REASON_PIN;
+    else if( rr & POWER_RESETREAS_OFF_Msk )      s_reset_reason = RESET_REASON_OFF;
+    else                                              s_reset_reason = RESET_REASON_NONE;
+    NRF_POWER->RESETREAS = rr;  /* write-1-to-clear so the next reset is clean */
+}
+
 void app_lora_packet_power_on_uplink( void )
 {
     int8_t battery = sensor_bat_sample( );
@@ -61,6 +77,7 @@ void app_lora_packet_power_on_uplink( void )
     app_lora_packet_len = 13;
 
     app_lora_packet_buffer[app_lora_packet_len++] = FIRMWARE_VERSION;
+    app_lora_packet_buffer[app_lora_packet_len++] = s_reset_reason;
 
     app_lora_packet_buffer[app_lora_packet_len++] = 0xC0;
     app_lora_packet_buffer[app_lora_packet_len++] = 0xDE;
@@ -107,8 +124,7 @@ void app_lora_packet_downlink_decode( uint8_t *buf, uint8_t len )
             case DATA_ID_DW_PACKET_SOS_CONTINUOUS:
             {
                 /* v22: SOS removed - downlink SOS toggle is a no-op */
-                PRINTF( "lora sos (disabled in v22)
-" );
+                PRINTF( "lora sos (disabled in v22)\r\n" );
             }
             break;
 
