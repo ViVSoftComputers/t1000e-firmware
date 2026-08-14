@@ -302,14 +302,25 @@ void app_toggle_power_off(void)
 
 void app_user_power_off( void )
 {
+    /* Checkpoint the cache to flash BEFORE suspending the modem/radio
+     * stack -- moved here after two failed bench tests with it placed
+     * after app_lora_stack_suspend(). Working theory: the SoftDevice's
+     * flash-write scheduling coordinates with radio activity to avoid
+     * timing collisions, and once smtc_modem_suspend_radio_communications()
+     * has put the radio into a suspended-but-not-fully-torn-down state,
+     * that coordination may never find a "safe" window to actually
+     * perform the write -- so it stays queued forever, regardless of
+     * how long the caller waits or how it checks for completion. This
+     * still only ever runs once, from this one-shot shutdown path, not
+     * from a modem event callback or ticking context -- see
+     * app_tracker_cache_persist.h for why that distinction is what
+     * actually matters for the alarm-timer hazard, not whether radio
+     * happens to be suspended yet. */
+    cache_persist_checkpoint( );
+
     // stop lbm
     app_lora_stack_suspend( );
     hal_mcu_wait_ms( 1000 );
-
-    /* Checkpoint the cache to flash now that the modem alarm/network are
-     * suspended -- see app_tracker_cache_persist.h for why this must
-     * never be called from a modem event callback or ticking context. */
-    cache_persist_checkpoint( );
 
     app_radio_set_sleep( );
 
