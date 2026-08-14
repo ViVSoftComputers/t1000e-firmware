@@ -80,18 +80,13 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
     fds_record_desc_t desc = { 0 };
     fds_find_token_t  tok  = { 0 };
     ret_code_t rc;
+    bool is_update = ( fds_record_find( CACHE_CKPT_FILE, slot, &desc, &tok ) == NRF_SUCCESS );
 
     s_op_done   = false;
     s_op_result = false;
 
-    if( fds_record_find( CACHE_CKPT_FILE, slot, &desc, &tok ) == NRF_SUCCESS )
-    {
-        rc = fds_record_update( &desc, &record );
-    }
-    else
-    {
-        rc = fds_record_write( &desc, &record );
-    }
+    rc = is_update ? fds_record_update( &desc, &record ) : fds_record_write( &desc, &record );
+    PRINTF( "cache_persist: slot %d %s queue rc=0x%02x\r\n", slot, is_update ? "update" : "write", rc );
     if( rc != NRF_SUCCESS )
     {
         return false;  /* failed to even queue -- e.g. genuinely out of space */
@@ -100,6 +95,7 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
     /* Layer 1: fixed delay + flag check, matching
      * write_record_by_desc()/update_record_by_desc(). */
     hal_mcu_wait_ms( FDS_OP_WAIT_MS );
+    PRINTF( "cache_persist: slot %d event done=%d result=%d\r\n", slot, s_op_done, s_op_result );
     if( !s_op_done || !s_op_result )
     {
         return false;
@@ -114,10 +110,12 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
 
     if( fds_record_find( CACHE_CKPT_FILE, slot, &verify_desc, &verify_tok ) != NRF_SUCCESS )
     {
+        PRINTF( "cache_persist: slot %d verify find FAILED\r\n", slot );
         return false;
     }
     if( fds_record_open( &verify_desc, &flash_record ) != NRF_SUCCESS )
     {
+        PRINTF( "cache_persist: slot %d verify open FAILED\r\n", slot );
         return false;
     }
 
@@ -127,6 +125,8 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
                      ( memcmp( flash_record.p_data, buf, expect_bytes ) == 0 );
 
     fds_record_close( &verify_desc );
+    PRINTF( "cache_persist: slot %d verify expect=%d actual=%d match=%d\r\n",
+             slot, expect_bytes, actual_bytes, verified );
     return verified;
 }
 
@@ -160,6 +160,7 @@ void cache_persist_restore( void )
         s_handler_registered = true;
     }
 
+    uint16_t restored = 0;
     for( uint16_t slot = 0; slot < CACHE_PERSIST_MAX_SLOTS; slot++ )
     {
         fds_record_desc_t  desc = { 0 };
@@ -187,8 +188,11 @@ void cache_persist_restore( void )
         if( entry_len > 0 && entry_len <= TRACKER_CACHE_MAX_SIZE )
         {
             tracker_cache_save( buf + 1, entry_len );
+            restored++;
         }
     }
+
+    PRINTF( "cache_persist: restore found and replayed %d entries\r\n", restored );
 }
 
 void cache_persist_checkpoint( void )
@@ -196,8 +200,11 @@ void cache_persist_checkpoint( void )
     uint16_t count = tracker_cache_count( );
     uint16_t persist_count = ( count < CACHE_PERSIST_MAX_SLOTS ) ? count : CACHE_PERSIST_MAX_SLOTS;
 
+    PRINTF( "cache_persist: checkpoint start, cache count=%d, persisting=%d\r\n", count, persist_count );
+
     waste_detect_recycle( );
 
+    uint16_t written = 0;
     for( uint16_t i = 0; i < persist_count; i++ )
     {
         uint8_t  entry_len = 0;
@@ -214,9 +221,13 @@ void cache_persist_checkpoint( void )
              * out waiting for confirmation -- stop here either way.
              * Slots already written (the oldest entries, written
              * first) stay protected. */
+            PRINTF( "cache_persist: checkpoint stopped at slot %d, %d written\r\n", i, written );
             return;
         }
+        written++;
     }
+
+    PRINTF( "cache_persist: checkpoint complete, %d entries written\r\n", written );
 
     /* Clean up any slots beyond what we just wrote -- leftovers from a
      * previous checkpoint that held more entries than this one does. */
