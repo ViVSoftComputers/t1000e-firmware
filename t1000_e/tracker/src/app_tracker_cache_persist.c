@@ -6,13 +6,6 @@
 
 #include <string.h>
 #include "fds.h"
-
-/* sd_app_evt_wait() -- same conditional include app_at_fds_datas.c
- * uses to get it, for the same reason. */
-#ifdef SOFTDEVICE_PRESENT
-#include "nrf_soc.h"
-#endif
-
 #include "smtc_hal.h"
 #include "app_at_fds_datas.h"
 #include "app_tracker_cache.h"
@@ -27,11 +20,28 @@
  * confirmed only via an FDS event. app_at_fds_datas.c's fds_evt_handler
  * already tracks this, but its fds_opt_status is static (file-private),
  * so this module registers its own handler rather than reaching into
- * that one. Bounded wait, matching the pattern waste_detect_recycle()
- * already uses for GC completion (sd_app_evt_wait() loop) -- not the
- * fixed-delay-then-hope pattern, which is exactly what let writes
- * silently not land in the first version of this file. */
-#define FDS_OP_WAIT_MAX_ITER   1000
+ * that one.
+ *
+ * A prior version of this file waited via a bounded sd_app_evt_wait()
+ * loop, mirroring how waste_detect_recycle() waits for GC completion.
+ * Bench-tested and confirmed NOT to work here: checkpointed entries
+ * never came back after a power cycle. app_at_fds_datas.c's own proven
+ * write path -- write_record_by_desc()/update_record_by_desc(), used
+ * for the config record that has reliably persisted across many
+ * versions of this firmware -- does NOT use sd_app_evt_wait() at all.
+ * It uses a fixed hal_mcu_wait_ms(8) delay plus a flag check, and its
+ * caller (write_lfs_file()) does a second, independent verification
+ * layer: an explicit read-back and memcmp against what was intended.
+ * This file now matches that exact two-layer pattern instead of the
+ * theoretically-cleaner-but-empirically-broken blocking wait. Best
+ * guess at why sd_app_evt_wait() didn't work here specifically:
+ * app_lora_stack_suspend() (called earlier in app_user_power_off(),
+ * before any checkpoint write) already suspends radio communications,
+ * which may reduce or change how SoftDevice events get dispatched at
+ * this point in the shutdown sequence -- not confirmed, just the most
+ * plausible explanation for a working pattern used elsewhere in this
+ * codebase not working in this specific call context. */
+#define FDS_OP_WAIT_MS   20
 
 static bool volatile s_op_done   = false;
 static bool volatile s_op_result = false;
@@ -51,17 +61,6 @@ static void cache_persist_fds_evt_handler( fds_evt_t const *p_evt )
         default:
             break;
     }
-}
-
-static bool fds_wait_for_op( void )
-{
-    uint32_t guard = 0;
-    while( !s_op_done && guard < FDS_OP_WAIT_MAX_ITER )
-    {
-        sd_app_evt_wait( );
-        guard++;
-    }
-    return s_op_done && s_op_result;
 }
 
 static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
@@ -98,7 +97,37 @@ static bool fds_write_slot( uint16_t slot, const uint8_t *data, uint8_t len )
         return false;  /* failed to even queue -- e.g. genuinely out of space */
     }
 
-    return fds_wait_for_op( );
+    /* Layer 1: fixed delay + flag check, matching
+     * write_record_by_desc()/update_record_by_desc(). */
+    hal_mcu_wait_ms( FDS_OP_WAIT_MS );
+    if( !s_op_done || !s_op_result )
+    {
+        return false;
+    }
+
+    /* Layer 2: independent read-back and byte-for-byte compare,
+     * matching write_lfs_file()'s verification -- don't just trust
+     * the event flag, confirm the bytes actually landed. */
+    fds_record_desc_t  verify_desc = { 0 };
+    fds_find_token_t   verify_tok  = { 0 };
+    fds_flash_record_t flash_record = { 0 };
+
+    if( fds_record_find( CACHE_CKPT_FILE, slot, &verify_desc, &verify_tok ) != NRF_SUCCESS )
+    {
+        return false;
+    }
+    if( fds_record_open( &verify_desc, &flash_record ) != NRF_SUCCESS )
+    {
+        return false;
+    }
+
+    uint16_t expect_bytes = 1 + len;
+    uint16_t actual_bytes = flash_record.p_header->length_words * sizeof( uint32_t );
+    bool verified = ( actual_bytes >= expect_bytes ) &&
+                     ( memcmp( flash_record.p_data, buf, expect_bytes ) == 0 );
+
+    fds_record_close( &verify_desc );
+    return verified;
 }
 
 static void fds_delete_slot( uint16_t slot )
@@ -112,7 +141,7 @@ static void fds_delete_slot( uint16_t slot )
         s_op_result = false;
         if( fds_record_delete( &desc ) == NRF_SUCCESS )
         {
-            fds_wait_for_op( );
+            hal_mcu_wait_ms( FDS_OP_WAIT_MS );
         }
     }
 }
