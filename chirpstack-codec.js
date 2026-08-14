@@ -68,7 +68,15 @@ function unpack (messageValue) {
         let packageLen
         switch (dataId) {
             case '1E':
-                packageLen = 26
+                /* 17 bytes total: id, battery, swMajor, swMinor, hwMajor,
+                 * hwMinor, scan_type, interval x2, acc_en, sos, wifi_max,
+                 * ble_max, app_firmware_version, reset_reason, 0xC0, 0xDE.
+                 * Was 26 (13 bytes) -- stopped right before
+                 * app_firmware_version was ever appended, so it and the
+                 * 0xC0 0xDE marker were silently dropped (and misread as
+                 * the start of an unrelated frame, which then failed to
+                 * match any case and discarded the rest of the message). */
+                packageLen = 34
                 if (remainMessage.length < packageLen) {
                     return frameArray
                 }
@@ -206,6 +214,10 @@ function deserialize (dataId, dataValue) {
                     measurementId: '3972', type: 'WI-FI Scan Limitation', measurementValue: this.getInt(dataValue.substring(20, 22))
                 }, {
                     measurementId: '3973', type: 'Beacon Scan Limitation', measurementValue: this.getInt(dataValue.substring(22, 24))
+                }, {
+                    measurementId: '3975', type: 'App Firmware Version', measurementValue: this.getInt(dataValue.substring(24, 26))
+                }, {
+                    measurementId: '3976', type: 'Reset Reason', measurementValue: this.getResetReason(dataValue.substring(26, 28))
                 }
             ]
             break
@@ -340,6 +352,25 @@ function getPositingStatus (str) {
             return {id:status, statusName:"Failed to obtain location due to the old Almanac."}
     }
     return getInt(str)
+}
+
+function getResetReason (str) {
+    let reason = getInt(str)
+    switch (reason) {
+        case 0:
+            return {id:reason, reasonName:"Power-on reset / none recorded"}
+        case 1:
+            return {id:reason, reasonName:"Reset pin"}
+        case 2:
+            return {id:reason, reasonName:"Watchdog timeout (hang)"}
+        case 3:
+            return {id:reason, reasonName:"CPU lockup (hard fault)"}
+        case 4:
+            return {id:reason, reasonName:"Software reset (command or error handler)"}
+        case 5:
+            return {id:reason, reasonName:"Wake from System OFF"}
+    }
+    return {id:reason, reasonName:"Unknown"}
 }
 
 function getUpShortInfo (messageValue) {
