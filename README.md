@@ -272,9 +272,9 @@ The new interval takes effect on the next scan cycle.
 
 ### Flash persistence (power-off only)
 
-The cache is RAM-only and normally lost on any power-off or reset. As of v27, the oldest `CACHE_PERSIST_MAX_SLOTS` (60) not-yet-drained entries are checkpointed to flash — but **only at deliberate power-off** (long-press), not on a crash or dead battery. See `app_tracker_cache_persist.h` for why: an earlier iteration did periodic flash writes from modem event callbacks and it broke `smtc_modem_alarm_start_timer()` (one packet after joining, then silence). The checkpoint runs once, from `app_user_power_off()`, after the modem alarm and network join have already been suspended — not from any callback or ticking context. Do not add a periodic/incremental checkpoint call without understanding why the previous one was removed.
+The cache is RAM-only and normally lost on any power-off or reset. As of v27, the oldest `CACHE_PERSIST_MAX_SLOTS` (300) not-yet-drained entries are checkpointed to flash — but **only at deliberate power-off** (long-press), not on a crash or dead battery. See `app_tracker_cache_persist.h` for why: an earlier iteration did periodic flash writes from modem event callbacks and it broke `smtc_modem_alarm_start_timer()` (one packet after joining, then silence). The checkpoint runs once, from `app_user_power_off()`, after the modem alarm and network join have already been suspended — not from any callback or ticking context. Do not add a periodic/incremental checkpoint call without understanding why the previous one was removed.
 
-FDS's total flash budget is 12KB (`FDS_VIRTUAL_PAGES` x `FDS_VIRTUAL_PAGE_SIZE` in `sdk_config.h`), shared with device config storage — nowhere near enough to persist the full 1000-entry cache, hence the 60-slot bound.
+FDS's total flash budget is 60KB (`FDS_VIRTUAL_PAGES` x `FDS_VIRTUAL_PAGE_SIZE` in `sdk_config.h`), grown from 12KB once the checkpoint became a one-shot write instead of a repeating one — shared with device config storage, still nowhere near enough to persist the full 1000-entry cache, hence the 300-slot bound. On an outage generating more undrained entries than that, the newest ones beyond the window are still lost on a power-off, same risk as before this feature existed, just for a much larger backlog than the original 60-slot version.
 
 ## Build
 

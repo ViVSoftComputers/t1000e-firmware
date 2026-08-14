@@ -6,14 +6,27 @@
  * to send. Does NOT protect against a crash or unexpected reset -- see
  * "Why power-off only" below for why that tradeoff is deliberate.
  *
- * Bounded by design: FDS has a small, fixed flash budget (12KB total --
- * FDS_VIRTUAL_PAGES(3) x FDS_VIRTUAL_PAGE_SIZE(1024 words) in
- * sdk_config.h -- shared with device config storage. That's nowhere near
- * enough to mirror the full ~136KB RAM cache (TRACKER_CACHE_MAX_DEPTH
- * entries), so this persists only the oldest CACHE_PERSIST_MAX_SLOTS
- * undrained entries -- the ones that would be sent next anyway, and the
- * ones a restore should protect to keep FIFO order intact. Entries
- * beyond that window stay RAM-only.
+ * Bounded by design: FDS's flash budget (FDS_VIRTUAL_PAGES x
+ * FDS_VIRTUAL_PAGE_SIZE in sdk_config.h, shared with device config
+ * storage) is 60KB as of v27 -- grown from the original 12KB once the
+ * checkpoint became a one-shot power-off-time write instead of a
+ * repeating one (see "Why power-off only" below), which removed the
+ * main reason to keep it small. Still nowhere near enough to mirror the
+ * full ~136KB RAM cache (TRACKER_CACHE_MAX_DEPTH(1000) entries), so
+ * this persists only the oldest CACHE_PERSIST_MAX_SLOTS(300) undrained
+ * entries -- the ones that would be sent next anyway, and the ones a
+ * restore should protect to keep FIFO order intact. Entries beyond that
+ * window stay RAM-only -- on a multi-day outage generating more than
+ * 300 undrained entries, the newest ones past that are still at risk on
+ * a power-off, same as before this feature existed, just for a much
+ * larger backlog than the original 60-slot version.
+ *
+ * Capacity math: worst case, every entry is TRACKER_CACHE_MAX_SIZE(128)
+ * bytes -- 300 x (~144 bytes/record including FDS header overhead) =
+ * ~43KB, leaving headroom in the 60KB budget for the config record and
+ * FDS's own GC scratch space. Typical entries are much smaller
+ * (~20-30 bytes), so real-world capacity is usually far better than
+ * this worst-case estimate.
  *
  * Why power-off only, not periodic: an earlier T1000-E iteration tried
  * doing FDS flash writes from modem event callbacks (on_modem_alarm(),
@@ -34,7 +47,7 @@
 
 #include <stdint.h>
 
-#define CACHE_PERSIST_MAX_SLOTS   60
+#define CACHE_PERSIST_MAX_SLOTS   300
 
 #ifdef __cplusplus
 extern "C" {

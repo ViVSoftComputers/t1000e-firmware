@@ -3521,8 +3521,15 @@
 // <i> Therefore, the minimum is two virtual pages: one page to store data and one page to be used by the system for garbage collection.
 // <i> The total amount of flash memory that is used by FDS amounts to @ref FDS_VIRTUAL_PAGES * @ref FDS_VIRTUAL_PAGE_SIZE * 4 bytes.
 
+/* Grown from 3 -> 15 (12KB -> 60KB total FDS budget) for v27's cache
+ * checkpoint (app_tracker_cache_persist.c), which needs room for up to
+ * CACHE_PERSIST_MAX_SLOTS records plus the existing device-config
+ * record and GC scratch space. Confirmed against a real linker .map:
+ * ~343KB free flash before this change, so 48KB more here still
+ * leaves ample headroom. Safe to raise further later if needed -- see
+ * app_tracker_cache_persist.h for the capacity math. */
 #ifndef FDS_VIRTUAL_PAGES
-#define FDS_VIRTUAL_PAGES 3
+#define FDS_VIRTUAL_PAGES 15
 #endif
 
 // <o> FDS_VIRTUAL_PAGE_SIZE  - The size of a virtual flash page.
