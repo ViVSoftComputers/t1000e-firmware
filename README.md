@@ -1,10 +1,10 @@
-# T1000-E Tracker Firmware — v26
+# T1000-E Tracker Firmware — v27
 
-Built: 2026-08-13  
+Built: 2026-08-14  
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v26 adds distinct beep patterns and persistent LED feedback** (turbo indicator, drain indicator, GPS-fix flashes) on top of v25's independent producer/consumer architecture. Producer and consumer are fully independent — each has its own timer, own schedule, own watchdog. They share nothing except the ring buffer cache. Producer only touches GPS/sensors and writes to cache. Consumer only touches the LoRa radio and reads from cache. Neither blocks the other.
+> **v27 adds a flash-backed cache checkpoint** — the oldest 300 undrained entries survive a deliberate power-off and are re-queued for drain on the next boot — on top of v26's distinct beep patterns and persistent LED feedback. Producer and consumer are fully independent — each has its own timer, own schedule, own watchdog. They share nothing except the ring buffer cache. Producer only touches GPS/sensors and writes to cache. Consumer only touches the LoRa radio and reads from cache. Neither blocks the other.
 
 ## 📖 Read the Full Article
 
@@ -24,10 +24,10 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## Flash
 
 1. Double-press the button to enter UF2 bootloader
-2. Drag `t1000-e-v26.uf2` onto the USB drive
+2. Drag `t1000-e-v27.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
-## v26 Button Behavior
+## v27 Button Behavior
 
 | Press | Action | Beep Feedback |
 |---|---|---|
@@ -110,7 +110,7 @@ Pure motion gate — only cache entries when the device actually moves.
 
 Result: stationary device → empty cache → consumer fires on schedule, finds nothing, waits. Battery and airtime conserved.
 
-## Architecture (v26)
+## Architecture (v27)
 
 ### Core Principle: Complete Separation
 
@@ -272,7 +272,7 @@ The new interval takes effect on the next scan cycle.
 
 ### Flash persistence (power-off only)
 
-The cache is RAM-only and normally lost on any power-off or reset. As of v27, the oldest `CACHE_PERSIST_MAX_SLOTS` (300) not-yet-drained entries are checkpointed to flash — but **only at deliberate power-off** (long-press), not on a crash or dead battery. See `app_tracker_cache_persist.h` for why: an earlier iteration did periodic flash writes from modem event callbacks and it broke `smtc_modem_alarm_start_timer()` (one packet after joining, then silence). The checkpoint runs once, from `app_user_power_off()`, after the modem alarm and network join have already been suspended — not from any callback or ticking context. Do not add a periodic/incremental checkpoint call without understanding why the previous one was removed.
+The cache is RAM-only and normally lost on any power-off or reset. As of v27, the oldest `CACHE_PERSIST_MAX_SLOTS` (300) not-yet-drained entries are checkpointed to flash — but **only at deliberate power-off** (long-press), not on a crash or dead battery. See `app_tracker_cache_persist.h` for why: an earlier iteration did periodic flash writes from modem event callbacks and it broke `smtc_modem_alarm_start_timer()` (one packet after joining, then silence). The checkpoint runs once, from `app_user_power_off()`, before the modem alarm and network join are suspended — the SoftDevice coordinates flash writes with radio activity, so the write must complete while the radio is still active — never from any callback or ticking context. Do not add a periodic/incremental checkpoint call without understanding why the previous one was removed.
 
 FDS's total flash budget is 60KB (`FDS_VIRTUAL_PAGES` x `FDS_VIRTUAL_PAGE_SIZE` in `sdk_config.h`), grown from 12KB once the checkpoint became a one-shot write instead of a repeating one — shared with device config storage, still nowhere near enough to persist the full 1000-entry cache, hence the 300-slot bound. On an outage generating more undrained entries than that, the newest ones beyond the window are still lost on a power-off, same risk as before this feature existed, just for a much larger backlog than the original 60-slot version.
 
