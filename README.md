@@ -265,6 +265,32 @@ The new interval takes effect on the next scan cycle.
 
 ## Cache
 
+The cache is a 1000-entry ring buffer in RAM. At a deliberate power-off, the oldest 300 undrained entries are checkpointed to flash:
+
+```mermaid
+flowchart TB
+    subgraph RAM["RAM — volatile"]
+        direction TB
+        P["Producer — Scan<br/>GPS · WiFi · BLE"]
+        C["Ring Buffer Cache<br/><b>1000 entries</b>"]
+        D["Consumer — Drain<br/>LoRaWAN uplink · every 25 min"]
+    end
+
+    subgraph FLASH["Flash — FDS · 60 KB · persistent"]
+        CK["Checkpoint<br/><b>300 entries</b><br/>oldest undrained"]
+    end
+
+    NET["LoRaWAN<br/>ChirpStack → MQTT → VictoriaMetrics"]
+
+    P -->|"tracker_cache_save()"| C
+    C -->|"drain · app_send_frame()"| D
+    D -->|"confirmed uplinks"| NET
+    C -.->|"power-off (long-press)"| CK
+    CK -.->|"restore + re-queue on boot"| C
+```
+
+*Static renders: [SVG](docs/cache-persistence.svg) · [PNG](docs/cache-persistence.png) · [Mermaid source](docs/cache-persistence.mmd)*
+
 - Ring buffer, `TRACKER_CACHE_MAX_DEPTH` (1000) entries maximum
 - No TTL expiry — entries are replayed in FIFO order regardless of age (the README previously claimed a 4-hour TTL; it was never actually implemented)
 - Concurrent read/write safe — producer appends at write pointer, consumer reads at read pointer

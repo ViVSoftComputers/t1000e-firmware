@@ -1,0 +1,19 @@
+flowchart TB
+    subgraph RAM["RAM — volatile"]
+        direction TB
+        P["Producer — Scan<br/>GPS · WiFi · BLE"]
+        C["Ring Buffer Cache<br/><b>1000 entries</b>"]
+        D["Consumer — Drain<br/>LoRaWAN uplink · every 25 min"]
+    end
+
+    subgraph FLASH["Flash — FDS · 60 KB · persistent"]
+        CK["Checkpoint<br/><b>300 entries</b><br/>oldest undrained"]
+    end
+
+    NET["LoRaWAN<br/>ChirpStack → MQTT → VictoriaMetrics"]
+
+    P -->|"tracker_cache_save()"| C
+    C -->|"drain · app_send_frame()"| D
+    D -->|"confirmed uplinks"| NET
+    C -.->|"power-off (long-press)"| CK
+    CK -.->|"restore + re-queue on boot"| C
