@@ -302,6 +302,10 @@ The cache is RAM-only and normally lost on any power-off or reset. As of v27, th
 
 FDS's total flash budget is 60KB (`FDS_VIRTUAL_PAGES` x `FDS_VIRTUAL_PAGE_SIZE` in `sdk_config.h`), grown from 12KB once the checkpoint became a one-shot write instead of a repeating one — shared with device config storage, still nowhere near enough to persist the full 1000-entry cache, hence the 300-slot bound. On an outage generating more undrained entries than that, the newest ones beyond the window are still lost on a power-off, same risk as before this feature existed, just for a much larger backlog than the original 60-slot version.
 
+## Sample Data
+
+![Sample of data collected by the T1000-E unit](docs/sample-data.jpg)
+
 ## Build
 
 Requires nRF5 SDK 17.1.0 and ARM GCC toolchain.
