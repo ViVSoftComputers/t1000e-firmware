@@ -24,7 +24,7 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## Flash
 
 1. Double-press the button to enter UF2 bootloader
-2. Drag `t1000-e-v28-scan-before-join.uf2` onto the USB drive
+2. Drag `t1000-e-v28-scan-tracing.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
 ## v28 Button Behavior
