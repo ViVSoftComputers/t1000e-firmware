@@ -400,6 +400,21 @@ static void on_modem_reset( uint16_t reset_count )
 
     apps_modem_common_configure_lorawan_params( stack_id );
 
+    /* Start the producer (GPS scan + cache) immediately, independent of
+     * join status -- do not wait for on_modem_network_joined(). Before
+     * this, producer_next_s/consumer_next_s were only ever first set
+     * inside on_modem_network_joined(), so the whole scan/cache/drain
+     * alarm system stayed completely dormant until a successful join --
+     * meaning a device powered on out of coverage (its OTAA join
+     * retries automatically in the background, but may not succeed for
+     * a long time, or ever, if it never returns to coverage before
+     * being turned off again) would scan and cache nothing at all for
+     * as long as it stayed out of range, defeating the point of the
+     * flash-backed cache. The consumer deliberately still only starts
+     * from on_modem_network_joined() -- draining requires a join,
+     * there's nothing useful for it to do before one succeeds. */
+    schedule_producer( 15 );
+
     uint8_t ativation_mode;
     ativation_mode = smtc_modem_get_activation_mode( stack_id );
     if( ativation_mode == 0 ) // OTAA

@@ -193,6 +193,8 @@ flowchart LR
 
 `sync_alarm()` picks the sooner of the two timers for the single modem alarm — both fire independently.
 
+**Producer starts before join, not after (v28+).** `producer_next_s` is first set in `on_modem_reset()`, which fires immediately after modem init — not in `on_modem_network_joined()`. Scanning and caching begin right away regardless of LoRaWAN join status; the OTAA join keeps retrying automatically in the background. Only the consumer still waits for `on_modem_network_joined()`, since draining requires a join. This matters for a device that's only ever in coverage some of the time (e.g. LoRaWAN only at home) — before this, a power-on outside coverage meant zero scanning, zero caching, for as long as it stayed out of range, which defeated the point of the flash-backed cache.
+
 ### ISR-Safe Architecture
 
 `APP_TIMER_CONFIG_USE_SCHEDULER` is `0` in `sdk_config.h`, which means `app_timer`
