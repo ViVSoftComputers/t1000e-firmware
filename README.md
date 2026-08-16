@@ -1,10 +1,10 @@
-# T1000-E Tracker Firmware — v27
+# T1000-E Tracker Firmware — v28
 
-Built: 2026-08-14  
+Built: 2026-08-16  
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v27 adds a flash-backed cache checkpoint** — the oldest 300 undrained entries survive a deliberate power-off and are re-queued for drain on the next boot — on top of v26's distinct beep patterns and persistent LED feedback. Producer and consumer are fully independent — each has its own timer, own schedule, own watchdog. They share nothing except the ring buffer cache. Producer only touches GPS/sensors and writes to cache. Consumer only touches the LoRa radio and reads from cache. Neither blocks the other.
+> **v28 fixes the GPS epoch (was ~363 days off) and starts scanning before the LoRaWAN join.** Two fixes: (1) `gnss_get_epoch()` in `ag3335.c` used a wrong day-conversion formula, so every embedded payload timestamp was ~363 days in the past — corrected to `days + doy - 1` and verified on hardware. (2) The producer now arms its timer in `on_modem_reset()` — right after modem init, independent of join status — so a device powered on outside coverage scans and caches immediately instead of sitting idle. On top of v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback. Producer and consumer stay fully independent — each with its own timer, schedule, and watchdog, sharing nothing but the ring buffer.
 
 ## 📖 Read the Full Article
 
@@ -24,10 +24,10 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## Flash
 
 1. Double-press the button to enter UF2 bootloader
-2. Drag `t1000-e-v27.uf2` onto the USB drive
+2. Drag `t1000-e-v28-scan-before-join.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
-## v27 Button Behavior
+## v28 Button Behavior
 
 | Press | Action | Beep Feedback |
 |---|---|---|
@@ -110,7 +110,7 @@ Pure motion gate — only cache entries when the device actually moves.
 
 Result: stationary device → empty cache → consumer fires on schedule, finds nothing, waits. Battery and airtime conserved.
 
-## Architecture (v27)
+## Architecture (v28)
 
 ### Core Principle: Complete Separation
 
@@ -194,6 +194,8 @@ flowchart LR
 `sync_alarm()` picks the sooner of the two timers for the single modem alarm — both fire independently.
 
 **Producer starts before join, not after (v28+).** `producer_next_s` is first set in `on_modem_reset()`, which fires immediately after modem init — not in `on_modem_network_joined()`. Scanning and caching begin right away regardless of LoRaWAN join status; the OTAA join keeps retrying automatically in the background. Only the consumer still waits for `on_modem_network_joined()`, since draining requires a join. This matters for a device that's only ever in coverage some of the time (e.g. LoRaWAN only at home) — before this, a power-on outside coverage meant zero scanning, zero caching, for as long as it stayed out of range, which defeated the point of the flash-backed cache.
+
+**GPS epoch corrected (v28).** `gnss_get_epoch()` in `ag3335.c` had a wrong day-conversion formula (`days - (days_in_year - doy) + 1` instead of `days + doy - 1`), which made every embedded payload timestamp ~363 days in the past. Fixed in v28 (along with a latent leap-day loop-bound bug), verified with exhaustive date tests and on real hardware.
 
 ### ISR-Safe Architecture
 
