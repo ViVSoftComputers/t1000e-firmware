@@ -358,21 +358,27 @@ uint32_t gnss_get_epoch( void )
     
     y -= 1970;
     uint32_t days = y * 365;
-    /* Add leap days between 1970 and (1970+y) */
-    int leap_year;
-    for( int i = 1970; i < 1970 + ( int )y + 1; i++ )
+    /* Add leap days between 1970 and (1970+y), EXCLUSIVE of the current
+     * year -- its own leap day (if any) is accounted for below via
+     * doy++, not here. Previously looped through 1970+y inclusive,
+     * double-counting the current year's leap day for any post-Feb-29
+     * date once the days-formula bug below was fixed. Currently
+     * harmless (2026 isn't a leap year), but would have shifted every
+     * post-February timestamp by one day starting 2028. */
+    for( int i = 1970; i < 1970 + ( int )y; i++ )
     {
         if(( i % 4 == 0 && i % 100 != 0 ) || i % 400 == 0 ) days++;
     }
-    /* Subtract days after current year-end (leap day already counted if applicable) */
     static const int dom[] = {0,31,59,90,120,151,181,212,243,273,304,334};
     int doy = dom[m-1] + d;
     if( m > 2 && (( ( 1970 + ( int )y ) % 4 == 0 && ( 1970 + ( int )y ) % 100 != 0 ) || ( 1970 + ( int )y ) % 400 == 0 ))
         doy++;  /* leap day */
-    /* days now = total days from 0 to end of current year.
-       days - (days_in_full_year - doy) gives epoch days. */
-    int days_in_year = 365 + ((( ( 1970 + ( int )y ) % 4 == 0 && ( 1970 + ( int )y ) % 100 != 0 ) || ( 1970 + ( int )y ) % 400 == 0 ) ? 1 : 0);
-    days = days - ( days_in_year - doy ) + 1;  /* +1: Jan 1 is day 1 */
+    /* days = days from epoch to Jan 1 of the current year (NOT to
+     * year-end -- the old comment here was wrong, which is what led to
+     * the original bug: it subtracted days that were never added).
+     * Add day-of-year to move forward to the actual date. -1 because
+     * Jan 1 is day 1 of the year, not day 0 past Jan 1. */
+    days = days + doy - 1;
     
     return days * 86400 + frame_zda.time.hours * 3600 + frame_zda.time.minutes * 60 + frame_zda.time.seconds;
 }
