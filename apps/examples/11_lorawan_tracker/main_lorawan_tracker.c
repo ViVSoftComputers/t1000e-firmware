@@ -144,6 +144,7 @@ int8_t scan_result_num = 0;
  * Each side schedules its own next tick. on_modem_alarm() picks the sooner. */
 static uint32_t producer_next_s = 0;  /* absolute RTC seconds */
 static uint32_t consumer_next_s = 0;  /* absolute RTC seconds */
+static bool modem_joined = false;
 
 uint8_t event_state = 0;
   /* queued presses during scan */
@@ -205,6 +206,7 @@ static void on_modem_network_joined( void );
  * @brief Alarm event callback
  */
 static void on_modem_alarm( void );
+static void on_modem_join_fail( void );
 static void stuck_scan_watchdog( void );
 static void process_pending_button_action( void );
 
@@ -285,7 +287,7 @@ int main( void )
         .alarm                 = on_modem_alarm,
         .almanac_update        = NULL,
         .down_data             = on_modem_down_data,
-        .join_fail             = NULL,
+        .join_fail             = on_modem_join_fail,
         .joined                = on_modem_network_joined,
         .link_status           = NULL,
         .mute                  = NULL,
@@ -394,6 +396,9 @@ APP_MAIN:
 
 static void on_modem_reset( uint16_t reset_count )
 {
+    modem_joined = false;  /* a modem reset requires a fresh OTAA join */
+    consumer_next_s = 0;   /* consumer re-initializes after the join */
+
     HAL_DBG_TRACE_INFO( "Application parameters:\n" );
     HAL_DBG_TRACE_INFO( "  - LoRaWAN uplink Fport = %d\n", LORAWAN_APP_PORT );
     HAL_DBG_TRACE_INFO( "  - Confirmed uplink     = %s\n", ( LORAWAN_CONFIRMED_MSG_ON == true ) ? "Yes" : "No" );
@@ -453,6 +458,14 @@ static void custom_lora_adr_compute( uint8_t min, uint8_t max, uint8_t *buf )
 static void on_modem_network_joined( void )
 {
     smtc_modem_region_t region;
+
+    modem_joined = true;
+    /* Drain any cache accumulated while out of coverage — soon after join. */
+    if( consumer_next_s == 0 )
+    {
+        schedule_consumer( 3 );
+    }
+
     ASSERT_SMTC_MODEM_RC( smtc_modem_get_region( stack_id, &region ));
 
     if( app_led_state != APP_LED_BLE_CFG )
@@ -808,12 +821,26 @@ static void beep_force_drain_complete( void )
     hal_pwm_deinit( );
 }
 
+/*!
+ * @brief Join-fail event callback (still out of coverage).
+ */
+static void on_modem_join_fail( void )
+{
+    /* The modem re-armed its single alarm for the join-retry backoff, which
+     * clobbered the producer/consumer alarm. Re-arm from the existing schedule:
+     * producer_next_s / consumer_next_s are unchanged, so sync_alarm() restores
+     * the correct next tick and scanning keeps running while unjoined. */
+    sync_alarm( );
+}
+
 static void on_modem_alarm( void )
 {
     uint32_t now = hal_rtc_get_time_s( );
 
-    /* Consumer: drain if its timer expired AND cache has entries */
-    if( now >= consumer_next_s )
+    /* Consumer: drain if its timer expired AND cache has entries.
+     * Only when joined — while unjoined, consumer_next_s is 0, so "now >= 0"
+     * is always true and would spam failed send attempts. */
+    if( modem_joined && now >= consumer_next_s )
     {
         if( tracker_cache_count( ) > 0 && !cache_drain_active )
         {
