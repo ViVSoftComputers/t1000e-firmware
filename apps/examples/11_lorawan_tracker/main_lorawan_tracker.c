@@ -727,14 +727,13 @@ static void process_pending_button_action( void )
     }
     pending_button_action = BUTTON_ACTION_NONE;
 
-    smtc_modem_status_mask_t modem_status;
-    smtc_modem_get_status( 0, &modem_status );
-    if( ( modem_status & SMTC_MODEM_STATUS_JOINING ) == SMTC_MODEM_STATUS_JOINING )
-    {
-        HAL_DBG_TRACE_PRINTF( "LORA_JOINING, SKIP_IT\n" );
-        return;
-    }
-
+    /* No JOINING gate here on purpose: scan and turbo-toggle are producer-
+     * side and don't need a join, and force-drain just sets
+     * force_drain_pending, which on_modem_alarm()'s modem_joined check
+     * (above) leaves inert until a real join happens. Gating here used to
+     * make every button dead for the entire time the unit is out of
+     * coverage, which is most of what force-drain and this scan-before-join
+     * feature exist to fix. */
     switch( action )
     {
         case BUTTON_ACTION_SCAN_NOW:
