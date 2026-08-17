@@ -659,13 +659,6 @@ static void on_modem_network_joined( void )
             break;
         }
 
-        HAL_DBG_TRACE_PRINTF( "User ADR list: " ); // just for test
-        for( uint8_t i = 0; i < 16; i++ )
-        {
-            HAL_DBG_TRACE_PRINTF( "%d ", adr_custom_list_region[i] ); // just for test
-        }
-        HAL_DBG_TRACE_PRINTF( "\r\n" ); // just for test
-
         ASSERT_SMTC_MODEM_RC( smtc_modem_adr_set_profile( stack_id, SMTC_MODEM_ADR_PROFILE_CUSTOM, adr_custom_list_region ));
         // ASSERT_SMTC_MODEM_RC( smtc_modem_set_nb_trans( stack_id, custom_nb_trans_region ));
     }
@@ -1066,7 +1059,6 @@ static void app_tracker_gnss_scan_end( void )
     if( gnss_get_fix_status( ))
     {
         gnss_get_position( &lat, &lon );
-        HAL_DBG_TRACE_PRINTF( "lat: %u, lon: %u\n\n", lat, lon );
         memcpyr( tracker_gps_scan_data, ( uint8_t *)&lon, 4 );
         memcpyr( tracker_gps_scan_data + 4, ( uint8_t *)&lat, 4 );
         tracker_gps_scan_len = 8;
@@ -1111,11 +1103,6 @@ static void app_tracker_scan_result_send( void )
     {
         qma6100p_read_raw_data( &ax, &ay, &az );
     }
-
-    PRINTF( "tracker_gps_scan_len: %d\r\n", tracker_gps_scan_len );
-    PRINTF( "tracker_wifi_scan_len: %d\r\n", tracker_wifi_scan_len );
-    PRINTF( "tracker_ble_scan_len: %d\r\n", tracker_ble_scan_len );
-    PRINTF( "scan_result_num: %d\r\n", scan_result_num );
 
     if( tracker_gps_scan_len == 0 && tracker_wifi_scan_len == 0 && tracker_ble_scan_len == 0 )
     {

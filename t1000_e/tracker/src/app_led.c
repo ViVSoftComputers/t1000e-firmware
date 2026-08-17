@@ -110,6 +110,11 @@ void app_led_breathe_start( void )
 
         ( void )nrf_drv_pwm_simple_playback( &PWM2, &m_pwm_seq, 1, NRF_DRV_PWM_FLAG_LOOP );
     }
+
+    /* Auto-stop the breathing after a few seconds so the LED frees up for
+     * other states (turbo/drain/scan) while the join keeps retrying in the
+     * background — the timeout handler transitions to APP_LED_IDLE. */
+    app_timer_start( m_led_event_timer_id, APP_TIMER_TICKS( 10000 ), NULL );
 }
 
 void app_led_breathe_stop( void )
@@ -241,6 +246,14 @@ void app_user_led_event_timeout_handler( void *p_context )
         case APP_LED_IDLE:
         {
             hal_gpio_init_out( USER_LED_G, HAL_GPIO_RESET );
+        }
+        break;
+
+        case APP_LED_LORA_JOINING:
+        {
+            /* Breathing timeout reached — stop so other LED states can show.
+             * The LoRaWAN join keeps retrying in the background regardless. */
+            app_led_breathe_stop( );
         }
         break;
 
