@@ -100,8 +100,9 @@ typedef enum eATEerror
 #define AT_BUZ_EN           "+BUZ_EN"
 #define AT_TESTMODE_TYPE    "+TESTMODE_TYPE"
 #define AT_DISCONNECT       "+DISCONNECT"      
-#define AT_LBDADDR          "+LBDADDR"  
+#define AT_LBDADDR          "+LBDADDR"
 #define AT_POWER_OFF        "+POWER_OFF"
+#define AT_GPX              "+GPX"
 
 
 /**
@@ -591,6 +592,15 @@ ATEerror_t AT_WIFI_MAX_set(const char *param);
  * @return ATEerror_t 
  */
 ATEerror_t AT_POWER_OFF_run(const char *param);
+
+/**
+ * @brief Stream the tracker cache's GPS-fix entries as a GPX 1.1 track over
+ *        the current BLE connection
+ *
+ * @param param
+ * @return ATEerror_t
+ */
+ATEerror_t AT_GPX_get(const char *param);
 
 #ifdef __cplusplus
 }

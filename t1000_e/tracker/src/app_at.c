@@ -7,6 +7,8 @@
 #include "app_at_command.h"
 #include "app_config_param.h"
 #include "app_at_fds_datas.h"
+#include "app_tracker_cache.h"
+#include "app_lora_packet.h"
 
 #define tiny_sscanf sscanf
 
@@ -1282,3 +1284,110 @@ ATEerror_t AT_POWER_OFF_run(const char *param)
     return AT_OK;
 }
 /*------------------------AT+POWER_OFF\r\n-------------------------------------*/
+
+/*------------------------AT+GPX=?\r\n-------------------------------------*/
+/* Unix epoch (UTC) -> calendar date/time, for the GPX <time> field.
+ * Inverse of gnss_get_epoch() in ag3335.c -- same year/month decomposition
+ * approach, just subtracting days instead of accumulating them. */
+static void epoch_to_utc( uint32_t epoch, uint16_t *year, uint8_t *month, uint8_t *day,
+                           uint8_t *hour, uint8_t *min, uint8_t *sec )
+{
+    uint32_t days = epoch / 86400;
+    uint32_t rem  = epoch % 86400;
+    *hour = rem / 3600;
+    *min  = ( rem % 3600 ) / 60;
+    *sec  = rem % 60;
+
+    uint16_t y = 1970;
+    for( ;; )
+    {
+        bool leap = ( y % 4 == 0 && ( y % 100 != 0 || y % 400 == 0 ));
+        uint16_t days_in_year = leap ? 366 : 365;
+        if( days < days_in_year ) break;
+        days -= days_in_year;
+        y++;
+    }
+    *year = y;
+
+    bool leap = ( y % 4 == 0 && ( y % 100 != 0 || y % 400 == 0 ));
+    static const uint8_t days_in_month[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    uint8_t m = 0;
+    for( ; m < 12; m++ )
+    {
+        uint8_t dim = days_in_month[m] + (( m == 1 && leap ) ? 1 : 0 );
+        if( days < dim ) break;
+        days -= dim;
+    }
+    *month = m + 1;
+    *day = days + 1;
+}
+
+/* Stream the cache's GPS-fix entries as a GPX 1.1 track. Each cache entry
+ * holds the already-encoded uplink payload, not decoded coordinates -- the
+ * lon/lat/epoch offsets below mirror exactly how app_tracker_scan_result_send()
+ * in main_lorawan_tracker.c packs them (7-byte sensor header, +6 more if
+ * accelerometer data is present, then lon/lat/epoch as memcpyr'd int32s).
+ * Only DATA_ID_UP_PACKET_GPS_SEN_*_BAT entries carry coordinates -- WiFi/BLE
+ * entries are resolved to a position by the LNS/backend, not locally, so
+ * they're skipped here. */
+ATEerror_t AT_GPX_get(const char *param)
+{
+    /* Every AT_PRINTF here is kept well under ~50 bytes on purpose: each
+     * call is one BLE GATT notification (send_data_to_ble() -> ble_nus_data_send()),
+     * and a notification larger than the connected phone's negotiated ATT
+     * MTU fails with an error send_data_to_ble()'s retry loop doesn't
+     * tolerate, hitting APP_ERROR_CHECK. Short, frequent notifications stay
+     * safe across whatever MTU actually gets negotiated. */
+    AT_PRINTF( "\r\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n" );
+    AT_PRINTF( "<gpx version=\"1.1\" creator=\"T1000-E\"\r\n" );
+    AT_PRINTF( " xmlns=\"http://www.topografix.com/GPX/1/1\">\r\n" );
+    AT_PRINTF( "<trk><name>T1000-E cache</name><trkseg>\r\n" );
+
+    uint16_t count = tracker_cache_count( );
+    for( uint16_t i = 0; i < count; i++ )
+    {
+        uint8_t len;
+        uint32_t ts;
+        uint8_t *data = tracker_cache_get( i, &len, &ts );
+        (void)ts; /* real fix time comes from the embedded GPS epoch below */
+        if( data == NULL ) continue;
+
+        uint8_t gps_offset;
+        if( data[0] == DATA_ID_UP_PACKET_GPS_SEN_ACC_BAT )
+        {
+            gps_offset = 13; /* 7-byte sensor header + 6-byte accelerometer */
+        }
+        else if( data[0] == DATA_ID_UP_PACKET_GPS_SEN_BAT )
+        {
+            gps_offset = 7;
+        }
+        else
+        {
+            continue; /* no coordinates in this entry */
+        }
+
+        if( len < gps_offset + 12 ) continue; /* need lon + lat + epoch */
+
+        int32_t lon_raw, lat_raw;
+        uint32_t epoch;
+        memcpyr( ( uint8_t * )( &lon_raw ), data + gps_offset, 4 );
+        memcpyr( ( uint8_t * )( &lat_raw ), data + gps_offset + 4, 4 );
+        memcpyr( ( uint8_t * )( &epoch ), data + gps_offset + 8, 4 );
+
+        int32_t lat_abs = ( lat_raw < 0 ) ? -lat_raw : lat_raw;
+        int32_t lon_abs = ( lon_raw < 0 ) ? -lon_raw : lon_raw;
+
+        uint16_t year; uint8_t month, day, hour, min, sec;
+        epoch_to_utc( epoch, &year, &month, &day, &hour, &min, &sec );
+
+        AT_PRINTF( "<trkpt lat=\"%s%ld.%06ld\" lon=\"%s%ld.%06ld\">\r\n",
+                   ( lat_raw < 0 ) ? "-" : "", ( long )( lat_abs / 1000000 ), ( long )( lat_abs % 1000000 ),
+                   ( lon_raw < 0 ) ? "-" : "", ( long )( lon_abs / 1000000 ), ( long )( lon_abs % 1000000 ) );
+        AT_PRINTF( "<time>%04u-%02u-%02uT%02u:%02u:%02uZ</time></trkpt>\r\n",
+                   year, month, day, hour, min, sec );
+    }
+
+    AT_PRINTF( "</trkseg></trk></gpx>\r\n" );
+    return AT_OK;
+}
+/*------------------------AT+GPX=?\r\n-------------------------------------*/

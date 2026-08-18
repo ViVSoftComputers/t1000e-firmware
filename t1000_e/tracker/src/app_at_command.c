@@ -430,10 +430,21 @@ static const struct ATCommand_s ATCommand[] =
             #ifndef NO_HELP
             .help_string = "AT" AT_POWER_OFF " Set device poweroff\r\n",
             #endif /* !NO_HELP */
-            .get = AT_return_error,    
+            .get = AT_return_error,
             .set = AT_return_error,
             .run = AT_POWER_OFF_run,
-        },  
+        },
+
+    {
+            .string = AT_GPX,
+            .size_string = sizeof(AT_GPX) - 1,
+            #ifndef NO_HELP
+            .help_string = "AT" AT_GPX "=?<CR><LF>. Stream cached GPS fixes as a GPX track\r\n",
+            #endif /* !NO_HELP */
+            .get = AT_GPX_get,
+            .set = AT_return_error,
+            .run = AT_return_error,
+        },
 };
 
 /**
