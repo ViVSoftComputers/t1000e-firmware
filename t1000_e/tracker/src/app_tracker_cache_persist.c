@@ -202,6 +202,13 @@ void cache_persist_restore( void )
             tracker_cache_save( buf + 1, entry_len );
             restored++;
         }
+
+        /* This slot has now been consumed -- restored into the RAM cache
+         * (or discarded as corrupt) either way. Without this, nothing ever
+         * clears the flash checkpoint: every future boot would find the
+         * same slots here and replay these entries again, forever, even
+         * after they've already drained over LoRaWAN many times over. */
+        fds_delete_slot( slot );
     }
 
     PRINTF( "cache_persist: restore found and replayed %d entries\r\n", restored );
