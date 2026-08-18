@@ -1,10 +1,10 @@
-# T1000-E Tracker Firmware — v28
+# T1000-E Tracker Firmware — v29
 
-Built: 2026-08-16  
+Built: 2026-08-18  
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v28 fixes the GPS epoch (was ~363 days off) and starts scanning before the LoRaWAN join.** Two fixes: (1) `gnss_get_epoch()` in `ag3335.c` used a wrong day-conversion formula, so every embedded payload timestamp was ~363 days in the past — corrected to `days + doy - 1` and verified on hardware. (2) The producer now arms its timer in `on_modem_reset()` — right after modem init, independent of join status — so a device powered on outside coverage scans and caches immediately instead of sitting idle. On top of v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback. Producer and consumer stay fully independent — each with its own timer, schedule, and watchdog, sharing nothing but the ring buffer.
+> **v29 is the first Bluetooth release: pull the cache off the device as a GPX file, no LoRaWAN or cable required.** The existing 3-click BLE advertising now leads somewhere — connect with any generic BLE terminal app (or the included `gpx-downloader.html` in Chrome/Edge on desktop or Android) and send `AT+GPX=?` to get every GPS-fix cache entry back as a standard GPX 1.1 track, reusing the AT-command console that already runs over both USB and BLE. Also fixes a real bug this uncovered: the v27 flash checkpoint was being restored on every boot but never cleared, so a single deliberate power-off's worth of cached entries would replay over LoRaWAN forever, on every future restart — including the BLE-disconnect reboot below. On top of v28's join-independent scanning and GPS epoch fix, v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback.
 
 ## 📖 Read the Full Article
 
@@ -24,10 +24,10 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## Flash
 
 1. Double-press the button to enter UF2 bootloader
-2. Drag `t1000-e-v28-scan-tracing.uf2` onto the USB drive
+2. Drag the latest `t1000-e-v29-*.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
-## v28 Button Behavior
+## v29 Button Behavior
 
 | Press | Action | Beep Feedback |
 |---|---|---|
@@ -110,7 +110,31 @@ Pure motion gate — only cache entries when the device actually moves.
 
 Result: stationary device → empty cache → consumer fires on schedule, finds nothing, waits. Battery and airtime conserved.
 
-## Architecture (v28)
+## BLE Console & GPX Download (v29)
+
+3-click starts BLE advertising, unchanged from prior versions — the device advertises as `T1000-E XXXX`. What's new is what you can do once connected: the same AT-command console already used over USB (`app_at.c`/`app_at_command.c`, ~40 commands) runs identically over this BLE connection via a Nordic-UART-style GATT service, so any generic BLE terminal app works, no companion app required.
+
+**Service and characteristic UUIDs** (custom 128-bit, not the standard Nordic UART UUIDs):
+
+| | UUID |
+|---|---|
+| Service | `49535343-fe7d-4ae5-8fa9-9fafd205e455` |
+| Write (send AT commands here) | `49535343-8841-43f4-a8d4-ecbe34729bb3` |
+| Notify (responses arrive here) | `49535343-1e4d-4bd9-ba61-23c647249616` |
+
+**Manual use (any BLE terminal app, e.g. LightBlue, nRF Connect):**
+1. 3-click the tracker, connect to `T1000-E XXXX`
+2. Subscribe to notifications on the Notify characteristic
+3. Write `AT+GPX=?\r\n` (hex: `41 54 2B 47 50 58 3D 3F 0D 0A`) to the Write characteristic
+4. The response streams back as a GPX 1.1 `<trk>` — one `<trkpt>` per cache entry that has a GPS fix. WiFi/BLE-only entries are skipped; those need the LNS/backend to resolve a position, which the device doesn't have offline.
+
+**`gpx-downloader.html`** — a self-contained Web Bluetooth page (Chrome/Edge/Opera on desktop or Android; unsupported on iOS, all browsers, since WebKit doesn't implement Web Bluetooth) that does the same thing with a Connect + Download button and saves the result as a `.gpx` file via a normal browser download. Open it directly in Chrome.
+
+**Known quirk:** the device reboots on any BLE disconnect (`hal_mcu_reset()` in `app_ble_all.c`'s `ble_evt_handler`, pre-existing behavior from the original BLE-config flow, not something v29 added). Disconnecting after a GPX download reboots the tracker — expected, matches how the existing BLE-config flow has always worked.
+
+Each individual AT response line sent over BLE is kept under ~50 bytes on purpose (see `AT_GPX_get()` in `app_at.c`): `send_data_to_ble()`'s retry loop doesn't tolerate the SoftDevice error a GATT notification larger than the connected phone's negotiated ATT MTU would return, so longer responses are split across several short notifications rather than sent as one long one.
+
+## Architecture (v29)
 
 ### Core Principle: Complete Separation
 
@@ -303,6 +327,8 @@ flowchart TB
 ### Flash persistence (power-off only)
 
 The cache is RAM-only and normally lost on any power-off or reset. As of v27, the oldest `CACHE_PERSIST_MAX_SLOTS` (300) not-yet-drained entries are checkpointed to flash — but **only at deliberate power-off** (long-press), not on a crash or dead battery. See `app_tracker_cache_persist.h` for why: an earlier iteration did periodic flash writes from modem event callbacks and it broke `smtc_modem_alarm_start_timer()` (one packet after joining, then silence). The checkpoint runs once, from `app_user_power_off()`, before the modem alarm and network join are suspended — the SoftDevice coordinates flash writes with radio activity, so the write must complete while the radio is still active — never from any callback or ticking context. Do not add a periodic/incremental checkpoint call without understanding why the previous one was removed.
+
+**Restore clears the checkpoint (v29 fix).** `cache_persist_restore()` runs once at boot and used to read the flash checkpoint into the RAM cache without ever deleting it — so a single checkpoint from one deliberate power-off would replay the same entries over LoRaWAN on *every* future boot, forever, including a plain BLE-disconnect reboot (see above). Fixed: each flash slot is deleted immediately after being read, whether the entry was restored or discarded as corrupt — either way it's been consumed and shouldn't come back.
 
 FDS's total flash budget is 60KB (`FDS_VIRTUAL_PAGES` x `FDS_VIRTUAL_PAGE_SIZE` in `sdk_config.h`), grown from 12KB once the checkpoint became a one-shot write instead of a repeating one — shared with device config storage, still nowhere near enough to persist the full 1000-entry cache, hence the 300-slot bound. On an outage generating more undrained entries than that, the newest ones beyond the window are still lost on a power-off, same risk as before this feature existed, just for a much larger backlog than the original 60-slot version.
 
