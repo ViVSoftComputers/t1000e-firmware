@@ -19,6 +19,7 @@
 extern void app_tracker_request_scan_now( void );
 extern void app_tracker_request_turbo_toggle( void );
 extern void app_tracker_request_force_drain( void );
+extern void app_tracker_request_lorawan_toggle( void );
 
 APP_TIMER_DEF(m_button_event_timer_id);
 APP_TIMER_DEF(m_ble_adv_event_timer_id);
@@ -200,6 +201,20 @@ void app_user_button_event_timeout_handler( void *p_context )
             }
             break;
 
+            case BUTTON_PRESS_FIVE_TIMES: // v30: LoRaWAN on/off toggle
+            {
+                button_click_cnt = 0;
+
+                if( ble_adv_flag == true )
+                {
+                    return;
+                }
+
+                /* Toggle + beep + flash save happen in the main loop. */
+                app_tracker_request_lorawan_toggle( );
+            }
+            break;
+
             default:
             break;
         }
@@ -276,9 +291,9 @@ void app_user_button_det( void )
             app_timer_start( m_button_event_timer_id,  APP_TIMER_TICKS( BUTTON_PRESS_CLICK ), NULL );
 
             button_click_cnt ++;
-            if( button_click_cnt > 4 )
+            if( button_click_cnt > 5 )
             {
-                button_click_cnt = 4;
+                button_click_cnt = 5;
             }
         }
     }

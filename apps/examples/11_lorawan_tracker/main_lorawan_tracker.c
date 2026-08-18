@@ -160,6 +160,7 @@ typedef enum
     BUTTON_ACTION_SCAN_NOW,
     BUTTON_ACTION_TURBO_TOGGLE,
     BUTTON_ACTION_FORCE_DRAIN,
+    BUTTON_ACTION_LORAWAN_TOGGLE,
 } button_action_t;
 
 static volatile button_action_t pending_button_action = BUTTON_ACTION_NONE;
@@ -420,16 +421,26 @@ static void on_modem_reset( uint16_t reset_count )
      * there's nothing useful for it to do before one succeeds. */
     schedule_producer( 15 );
 
-    uint8_t ativation_mode;
-    ativation_mode = smtc_modem_get_activation_mode( stack_id );
-    if( ativation_mode == 0 ) // OTAA
+    /* v30: 5-click can disable LoRaWAN entirely, persisted across
+     * reboots. Producer keeps scanning/caching either way (above) --
+     * this only decides whether the modem ever tries to join. */
+    if( app_param.hardware_info.lorawan_disabled )
     {
-        app_led_breathe_start( );
-        ASSERT_SMTC_MODEM_RC( smtc_modem_join_network( stack_id ) );
+        HAL_DBG_TRACE_PRINTF( "LORAWAN_DISABLED, SKIP_JOIN\n" );
     }
-    else // ABP, manual run joined init
+    else
     {
-        on_modem_network_joined( );
+        uint8_t ativation_mode;
+        ativation_mode = smtc_modem_get_activation_mode( stack_id );
+        if( ativation_mode == 0 ) // OTAA
+        {
+            app_led_breathe_start( );
+            ASSERT_SMTC_MODEM_RC( smtc_modem_join_network( stack_id ) );
+        }
+        else // ABP, manual run joined init
+        {
+            on_modem_network_joined( );
+        }
     }
 }
 
@@ -788,6 +799,46 @@ static void process_pending_button_action( void )
             }
             hal_pwm_deinit( );
             app_tracker_force_drain( );
+            break;
+        }
+
+        case BUTTON_ACTION_LORAWAN_TOGGLE:
+        {
+            app_param.hardware_info.lorawan_disabled = !app_param.hardware_info.lorawan_disabled;
+            check_save_param_type( );
+            save_Config( );
+
+            if( app_param.hardware_info.lorawan_disabled )
+            {
+                /* Off: leave the network and suspend the radio. Producer
+                 * keeps scanning/caching regardless -- BLE (AT+GPX) is
+                 * how you get data off the device while this is off. */
+                app_lora_stack_suspend( );
+                modem_joined = false;
+
+                /* Two low, falling tones: LoRaWAN going off. */
+                hal_pwm_init( 1000 );
+                hal_beep_on( ); hal_mcu_wait_ms( 150 );
+                hal_beep_off( ); hal_mcu_wait_ms( 100 );
+                hal_beep_on( ); hal_mcu_wait_ms( 150 );
+                hal_beep_off( );
+                hal_pwm_deinit( );
+            }
+            else
+            {
+                /* On: resume the radio and start a fresh join. */
+                app_lora_stack_resume( );
+
+                /* Two higher, rising tones: LoRaWAN coming back on --
+                 * mirrors the off pattern but inverted, same convention
+                 * as the turbo-toggle beeps above. */
+                hal_pwm_init( 2200 );
+                hal_beep_on( ); hal_mcu_wait_ms( 150 );
+                hal_beep_off( ); hal_mcu_wait_ms( 100 );
+                hal_beep_on( ); hal_mcu_wait_ms( 150 );
+                hal_beep_off( );
+                hal_pwm_deinit( );
+            }
             break;
         }
 
@@ -1781,6 +1832,27 @@ void app_lora_stack_suspend( void )
     smtc_modem_suspend_radio_communications( true );
 }
 
+/* v30: counterpart to app_lora_stack_suspend(), for the 5-click LoRaWAN
+ * toggle turning back on. Mirrors on_modem_reset()'s own join path --
+ * on_modem_network_joined() sets modem_joined/starts the consumer once
+ * the join actually succeeds, same as any other join. */
+void app_lora_stack_resume( void )
+{
+    smtc_modem_suspend_radio_communications( false );
+
+    uint8_t ativation_mode;
+    ativation_mode = smtc_modem_get_activation_mode( stack_id );
+    if( ativation_mode == 0 ) // OTAA
+    {
+        app_led_breathe_start( );
+        ASSERT_SMTC_MODEM_RC( smtc_modem_join_network( stack_id ) );
+    }
+    else // ABP, manual run joined init
+    {
+        on_modem_network_joined( );
+    }
+}
+
 /* ── v22: Scan interval & turbo mode helpers ─────────────────────── */
 
 void app_tracker_set_interval( uint32_t minutes )
@@ -1855,6 +1927,12 @@ void app_tracker_request_turbo_toggle( void )
 void app_tracker_request_force_drain( void )
 {
     pending_button_action = BUTTON_ACTION_FORCE_DRAIN;
+    hal_sleep_exit( );
+}
+
+void app_tracker_request_lorawan_toggle( void )
+{
+    pending_button_action = BUTTON_ACTION_LORAWAN_TOGGLE;
     hal_sleep_exit( );
 }
 

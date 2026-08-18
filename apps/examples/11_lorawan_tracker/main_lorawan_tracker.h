@@ -99,6 +99,7 @@ void app_tracker_new_run( uint8_t event );
 void app_radio_set_sleep( void );
 
 void app_lora_stack_suspend( void );
+void app_lora_stack_resume( void );
 
 /** @brief Set the periodic scan interval in minutes */
 void app_tracker_set_interval( uint32_t minutes );

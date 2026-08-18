@@ -1,10 +1,10 @@
-# T1000-E Tracker Firmware — v29
+# T1000-E Tracker Firmware — v30
 
 Built: 2026-08-18  
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v29 is the first Bluetooth release: pull the cache off the device as a GPX file, no LoRaWAN or cable required.** The existing 3-click BLE advertising now leads somewhere — connect with any generic BLE terminal app (or the included `gpx-downloader.html` in Chrome/Edge on desktop or Android) and send `AT+GPX=?` to get every GPS-fix cache entry back as a standard GPX 1.1 track, reusing the AT-command console that already runs over both USB and BLE. Also fixes a real bug this uncovered: the v27 flash checkpoint was being restored on every boot but never cleared, so a single deliberate power-off's worth of cached entries would replay over LoRaWAN forever, on every future restart — including the BLE-disconnect reboot below. On top of v28's join-independent scanning and GPS epoch fix, v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback.
+> **v30 adds a 5-click gesture to turn LoRaWAN off entirely — persisted across reboot — for using the tracker as a pure GPS+BLE logger.** GPS scanning and caching keep running unaffected either way; `AT+GPX` over BLE still works, so a device with LoRaWAN off is still fully usable, just silent on the radio. Built on `app_lora_stack_suspend()`/a new `app_lora_stack_resume()` counterpart and the existing FDS config-persistence pattern, so a device that's had LoRaWAN off for a while doesn't silently start rejoining after a power cycle. On top of v29's first Bluetooth release (AT+GPX, `gpx-downloader.html`, flash-checkpoint replay-loop fix), v28's join-independent scanning and GPS epoch fix, v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback.
 
 ## 📖 Read the Full Article
 
@@ -24,10 +24,10 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## Flash
 
 1. Double-press the button to enter UF2 bootloader
-2. Drag the latest `t1000-e-v29-*.uf2` onto the USB drive
+2. Drag the latest `t1000-e-v30-*.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
-## v29 Button Behavior
+## v30 Button Behavior
 
 | Press | Action | Beep Feedback |
 |---|---|---|
@@ -35,6 +35,7 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 | **Double-press** | Toggle **turbo mode** (~1min scans, fast polling) | 2 short high-pitched beeps on enter · 2 short low-pitched beeps on exit |
 | **Triple-press** | BLE advertising | — |
 | **Quad-press** | **Force drain all cached entries** | 3 quick beeps on start · rising two-tone chirp on complete |
+| **Five-press** | **Toggle LoRaWAN on/off** (persists across reboot) | 2 low falling tones = off · 2 higher rising tones = on |
 | **Long-press** (3s) | Power off | Power-off melody |
 
 ### Beep Reference
@@ -52,6 +53,8 @@ Every pattern below is now unique — no two events share the same sound. (Prior
 | **2 short, low pitch** (1.2kHz) | Turbo mode exited |
 | **3 quick** (60ms, 1.6kHz) | Force-drain started |
 | **Two-tone rising chirp** (1.2kHz → 2.4kHz) | Force-drain completed |
+| **2 low, falling** (150ms, 1kHz) | LoRaWAN turned off |
+| **2 higher, rising** (150ms, 2.2kHz) | LoRaWAN turned back on |
 
 ### LED Reference
 
@@ -89,6 +92,13 @@ The board has a red/green LED, no dimming. LEDs now do two jobs: a **momentary f
 - Out of range: one attempt, then stops
 - Cache empty → completion chirp plays immediately — works even with no entries
 - Useful for flushing cached data immediately
+
+### LoRaWAN Toggle (Five-Press, v30)
+- Press 5× rapidly → toggles LoRaWAN entirely on or off; state is saved to flash and **persists across reboot**
+- **Off**: leaves the network, suspends the radio — GPS scanning and caching keep running unaffected, and BLE (`AT+GPX`) still works, so the tracker becomes a pure local logger. Nothing is transmitted until turned back on.
+- **On**: resumes the radio and starts a fresh join, same as a normal boot
+- A device with LoRaWAN off still starts a fresh join attempt if 5-clicked back on, or if the config is reset — the flag only controls whether `on_modem_reset()` calls `smtc_modem_join_network()` at all
+- Existing configs from before v30 are unaffected — the flag defaults to "on" for any device flashed before this feature existed
 
 ### Mutual Exclusion
 Only one scan runs at a time — if any scan is in progress (single-click, scheduled, or turbo), all other scan triggers are rejected:
@@ -134,7 +144,7 @@ Result: stationary device → empty cache → consumer fires on schedule, finds 
 
 Each individual AT response line sent over BLE is kept under ~50 bytes on purpose (see `AT_GPX_get()` in `app_at.c`): `send_data_to_ble()`'s retry loop doesn't tolerate the SoftDevice error a GATT notification larger than the connected phone's negotiated ATT MTU would return, so longer responses are split across several short notifications rather than sent as one long one.
 
-## Architecture (v29)
+## Architecture (v30)
 
 ### Core Principle: Complete Separation
 

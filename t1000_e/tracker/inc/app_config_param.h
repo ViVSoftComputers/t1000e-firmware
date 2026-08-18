@@ -105,7 +105,16 @@ typedef struct hardware_info
     uint8_t beac_uuid[16];      // 
     uint8_t uuid_num;           // 
 
-    uint8_t test_mode;          // 
+    uint8_t test_mode;          //
+
+    /* v30: 5-click toggle. Stored inverted (disabled, not enabled) and
+     * placed at the end of the struct on purpose -- read_lfs_file() only
+     * copies as many bytes as the flash record actually holds, so a
+     * config saved by pre-v30 firmware leaves this byte at app_param's
+     * static-initializer default (0) instead of touching it. 0 must mean
+     * "LoRaWAN on" so every existing configured device keeps behaving
+     * exactly as it always has after a v30 upgrade. */
+    uint8_t lorawan_disabled;
 } hardware_info_t;
 
 #pragma pack( 4 )
