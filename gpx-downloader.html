@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>T1000-E GPX Downloader</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #1a1a1a; }
+  h1 { font-size: 1.3em; }
+  button { font-size: 1em; padding: 10px 18px; margin-right: 10px; margin-bottom: 10px; cursor: pointer; border-radius: 6px; border: 1px solid #ccc; background: #f5f5f5; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { background: #2563eb; color: white; border-color: #2563eb; }
+  #status { margin: 16px 0; padding: 12px 14px; border-radius: 6px; background: #f0f0f0; font-size: 0.95em; white-space: pre-wrap; }
+  #status.err { background: #fde8e8; color: #a10000; }
+  #status.ok { background: #e6f7ea; color: #0a7d2c; }
+  .hint { color: #666; font-size: 0.85em; margin-top: 30px; }
+</style>
+</head>
+<body>
+
+<h1>T1000-E GPX Downloader</h1>
+<p>Connects to the tracker over Web Bluetooth, sends <code>AT+GPX=?</code>, and saves the response as a <code>.gpx</code> file. Chrome/Edge/Opera on desktop or Android only &mdash; Web Bluetooth isn't available on iOS.</p>
+
+<button id="connectBtn" class="primary">Connect</button>
+<button id="downloadBtn" disabled>Download GPX</button>
+<button id="disconnectBtn" disabled>Disconnect</button>
+
+<div id="status">Not connected. Press 3-click on the tracker to start BLE advertising, then click Connect.</div>
+
+<p class="hint">Looks for a device named "T1000-E ...". Make sure the tracker is advertising (breathing LED, or press 3-click) before connecting.</p>
+
+<script>
+const SERVICE_UUID = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
+const WRITE_UUID    = '49535343-8841-43f4-a8d4-ecbe34729bb3'; // central -> device (AT commands)
+const NOTIFY_UUID   = '49535343-1e4d-4bd9-ba61-23c647249616'; // device -> central (AT responses)
+
+const connectBtn    = document.getElementById('connectBtn');
+const downloadBtn   = document.getElementById('downloadBtn');
+const disconnectBtn = document.getElementById('disconnectBtn');
+const statusEl      = document.getElementById('status');
+
+let device = null;
+let writeChar = null;
+let notifyChar = null;
+let rxBuffer = '';
+let receiving = false;
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind || '';
+}
+
+async function connect() {
+  try {
+    setStatus('Requesting device...');
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'T1000-E' }],
+      optionalServices: [SERVICE_UUID],
+    });
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+
+    setStatus('Connecting to ' + device.name + '...');
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    writeChar = await service.getCharacteristic(WRITE_UUID);
+    notifyChar = await service.getCharacteristic(NOTIFY_UUID);
+
+    await notifyChar.startNotifications();
+    notifyChar.addEventListener('characteristicvaluechanged', onNotify);
+
+    connectBtn.disabled = true;
+    downloadBtn.disabled = false;
+    disconnectBtn.disabled = false;
+    setStatus('Connected to ' + device.name + '.', 'ok');
+  } catch (err) {
+    setStatus('Connect failed: ' + err.message, 'err');
+  }
+}
+
+function disconnect() {
+  if (device && device.gatt.connected) {
+    device.gatt.disconnect();
+  }
+}
+
+function onDisconnected() {
+  connectBtn.disabled = false;
+  downloadBtn.disabled = true;
+  disconnectBtn.disabled = true;
+  writeChar = null;
+  notifyChar = null;
+  receiving = false;
+  setStatus('Disconnected. The tracker reboots on BLE disconnect, so wait for it to re-advertise before reconnecting.');
+}
+
+function onNotify(event) {
+  if (!receiving) return;
+  const chunk = new TextDecoder('utf-8').decode(event.target.value);
+  rxBuffer += chunk;
+
+  const trkptCount = (rxBuffer.match(/<trkpt/g) || []).length;
+  setStatus('Receiving... ' + rxBuffer.length + ' bytes, ' + trkptCount + ' track point(s) so far.');
+
+  // parse_cmd() always appends "\r\nOK\r\n" (or an error line) after the
+  // command's own output -- that's the reliable end-of-response marker,
+  // not just the closing </gpx> tag.
+  if (rxBuffer.endsWith('OK\r\n')) {
+    finishDownload();
+  }
+}
+
+async function startDownload() {
+  if (!writeChar) return;
+  rxBuffer = '';
+  receiving = true;
+  downloadBtn.disabled = true;
+  setStatus('Requesting GPX from tracker...');
+
+  const cmd = new TextEncoder().encode('AT+GPX=?\r\n');
+  try {
+    await writeChar.writeValue(cmd);
+  } catch (err) {
+    receiving = false;
+    downloadBtn.disabled = false;
+    setStatus('Write failed: ' + err.message, 'err');
+  }
+}
+
+function finishDownload() {
+  receiving = false;
+  downloadBtn.disabled = false;
+
+  const gpxStart = rxBuffer.indexOf('<?xml');
+  const gpxEnd = rxBuffer.indexOf('</gpx>');
+  if (gpxStart === -1 || gpxEnd === -1) {
+    setStatus('Response finished but no valid GPX found:\n' + rxBuffer, 'err');
+    return;
+  }
+  const gpxText = rxBuffer.slice(gpxStart, gpxEnd + '</gpx>'.length) + '\n';
+
+  const blob = new Blob([gpxText], { type: 'application/gpx+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 't1000e-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.gpx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+
+  const trkptCount = (gpxText.match(/<trkpt/g) || []).length;
+  setStatus('Saved ' + trkptCount + ' track point(s) to ' + a.download + '.', 'ok');
+}
+
+connectBtn.addEventListener('click', connect);
+downloadBtn.addEventListener('click', startDownload);
+disconnectBtn.addEventListener('click', disconnect);
+
+if (!navigator.bluetooth) {
+  setStatus('Web Bluetooth is not available in this browser. Use Chrome, Edge, or Opera on desktop or Android.', 'err');
+  connectBtn.disabled = true;
+}
+</script>
+
+</body>
+</html>
