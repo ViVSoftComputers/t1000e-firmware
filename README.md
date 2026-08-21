@@ -6,6 +6,33 @@ Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://git
 
 > **v31 fixes a downlink that never actually worked, adds a matching one for drain interval, and puts live battery/temp/light readings in the Bluetooth download.** The scan-interval downlink (`81 00 00 HH LL`, already documented below) had no handler behind it at all — every downlink silently did nothing since the code path that would apply it was missing. Fixed, and a new `83 00 00 HH LL` downlink controls the consumer's drain interval the same way. `AT+GPX` now opens with a live battery/temp/light reading (not from the cache — taken fresh, right when you ask) so BLE-only sessions aren't flying blind on battery, and every `<trkpt>` carries its own battery/temp/light as GPX `<extensions>`. On top of v30's 5-click LoRaWAN toggle, v29's first Bluetooth release (AT+GPX, `gpx-downloader.html`, flash-checkpoint replay-loop fix), v28's join-independent scanning and GPS epoch fix, v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback.
 
+## What This Is For (and What It Isn't)
+
+**The short version:** a low-power GPS tracker that logs everywhere it goes and reports back when it's in LoRaWAN range — with a Bluetooth escape hatch so you can pull the full track off it even with no network at all.
+
+The one-line framing that makes its strengths and limits obvious:
+
+> **This answers "where has it been," not "where is it right now."**
+
+It buffers every GPS fix locally and drains on its own schedule, so it's ideal for **periodic tracking within a known coverage area** plus **offline logging**. It is *not* a real-time "locate me now, anywhere in a city" pager — that job belongs to cellular or Apple's Find My network, which have the near-ubiquitous backhaul LoRaWAN doesn't.
+
+**Good fits**
+
+| Use case | Why it works |
+|---|---|
+| **Farm / ranch** — cattle, horses, equipment | One gateway covers the property; motion gate + cache are ideal |
+| **Construction / industrial yard** — trailers, generators, lifts | The operator owns the gateways, so coverage is a known quantity |
+| **Fleet & rental** — tools, bikes, kayaks, dump trailers | Route history + BLE download at day's end |
+| **Field-service route logging** — surveyors, techs, drivers | Download the GPX over BLE; no live network needed |
+| **Environmental sensing** — location + temp/light/battery per fix | Already packed into every payload |
+| **Hobbyist / education** | A genuinely ready-to-use LoRaWAN GPS tracker |
+
+**Not for**
+
+- **Emergency / elder / lone-worker "find them now."** The moment someone is lost, they're most likely out of gateway coverage, so the device buffers silently instead of reporting. Use a cellular tracker or an AirTag for that.
+- **Backcountry / off-grid rescue** — no gateways, no report.
+- **Continuous real-time tracking** — drain cadence is minutes, gated on motion and coverage.
+
 ## 📖 Read the Full Article
 
 Detailed write-up with architecture diagrams, field test results, and flashing guide:  
@@ -26,6 +53,23 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 1. Double-press the button to enter UF2 bootloader
 2. Drag the latest `t1000-e-v31-*.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
+
+## Choosing a LoRaWAN Network
+
+The T1000-E is a standard LoRaWAN OTAA Class A device, so it can join **any** LoRaWAN Network Server — it doesn't care whose it is. What changes is coverage, cost, and where your data lands:
+
+| Option | Cost | Coverage | Best for |
+|---|---|---|---|
+| **Self-hosted** (ChirpStack on your own gateway) | Free (your hardware) | Exactly where your gateways are | Full control, local data, no third party |
+| **TTN Community Edition** | Free (fair-use) | Public community gateways — good in cities, thin rural | Hobbyists, quick trial |
+| **Helium** | Data Credits (one-time onboarding + data fees) | Broadest hobbyist footprint, uneven since the mobile pivot | Public coverage without running your own gateway |
+| **Commercial carriers** (Senet, Everynet, The Things Stack) | Paid subscription | Carrier-grade + roaming agreements | Production / enterprise |
+
+**The honest caveat:** LoRaWAN has nothing like cellular coverage — coverage is *wherever a gateway happens to be*, so a roaming device will hit dead spots on every public network. The only thing approaching "everywhere" is **roaming** (commercial carriers share each other's gateways), and that's a paid feature.
+
+Onboarding is the same shape everywhere: register the device's **DevEUI + AppKey + JoinEUI** on the server of your choice, and make sure a gateway forwarding to that server can hear the device. For self-hosted, that's your own gateway; for TTN/Helium, it's whatever public gateways are in range.
+
+**One device, one live network at a time.** OTAA join sessions are per-server — the moment it joins a new network, the old one loses it. Either/or, not both.
 
 ## v30 Button Behavior (unchanged in v31)
 
