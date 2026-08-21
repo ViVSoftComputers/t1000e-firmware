@@ -1,8 +1,10 @@
 # T1000-E Tracker Firmware — v31
 
 Built: 2026-08-19  
-Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
+Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html?sensecap_affiliate=agiE1S0&referring_service=link) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
+
+> ⚠️ **LoRaWAN edition only.** This firmware is for the T1000-E **LoRaWAN** edition (the one with a printed DevEUI label). It is **not** for the Meshtastic edition — same hardware, but different firmware and no LoRaWAN credentials, so it won't join on a Meshtastic unit.
 
 > **v31 fixes a downlink that never actually worked, adds a matching one for drain interval, and puts live battery/temp/light readings in the Bluetooth download.** The scan-interval downlink (`81 00 00 HH LL`, already documented below) had no handler behind it at all — every downlink silently did nothing since the code path that would apply it was missing. Fixed, and a new `83 00 00 HH LL` downlink controls the consumer's drain interval the same way. `AT+GPX` now opens with a live battery/temp/light reading (not from the cache — taken fresh, right when you ask) so BLE-only sessions aren't flying blind on battery, and every `<trkpt>` carries its own battery/temp/light as GPX `<extensions>`. On top of v30's 5-click LoRaWAN toggle, v29's first Bluetooth release (AT+GPX, `gpx-downloader.html`, flash-checkpoint replay-loop fix), v28's join-independent scanning and GPS epoch fix, v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback.
 
