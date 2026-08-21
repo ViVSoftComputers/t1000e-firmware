@@ -45,6 +45,19 @@
   #status.err { background: #fde8e8; color: #a10000; }
   #status.ok { background: #e6f7ea; color: #0a7d2c; }
   .hint { color: #555; font-size: 0.9em; margin-top: 30px; }
+  #liveStatus {
+    display: none;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: #eff6ff;
+    border: 1px solid #dbe8ff;
+    font-size: 0.95em;
+  }
+  #liveStatus.show { display: flex; }
+  #liveStatus b { color: #2563eb; }
 
   @media (min-width: 600px) {
     html { font-size: 16px; }
@@ -66,6 +79,12 @@
   <button id="disconnectBtn" disabled>Disconnect</button>
 </div>
 
+<div id="liveStatus">
+  <span>Battery <b id="liveBat">&mdash;</b></span>
+  <span>Temp <b id="liveTemp">&mdash;</b></span>
+  <span>Light <b id="liveLight">&mdash;</b></span>
+</div>
+
 <div id="status">Not connected. Press 3-click on the tracker to start BLE advertising, then click Connect.</div>
 
 <p class="hint">Looks for a device named "T1000-E ...". Make sure the tracker is advertising (breathing LED, or press 3-click) before connecting.</p>
@@ -81,6 +100,10 @@ const connectBtn    = document.getElementById('connectBtn');
 const downloadBtn   = document.getElementById('downloadBtn');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const statusEl      = document.getElementById('status');
+const liveStatusEl  = document.getElementById('liveStatus');
+const liveBatEl     = document.getElementById('liveBat');
+const liveTempEl    = document.getElementById('liveTemp');
+const liveLightEl   = document.getElementById('liveLight');
 
 let device = null;
 let writeChar = null;
@@ -141,6 +164,10 @@ function onNotify(event) {
   const chunk = new TextDecoder('utf-8').decode(event.target.value);
   rxBuffer += chunk;
 
+  // Arrives near the start of the response, well before the full cache
+  // dump finishes, so show it the moment it's in rather than waiting.
+  showLiveStatus(rxBuffer);
+
   const trkptCount = (rxBuffer.match(/<trkpt/g) || []).length;
   setStatus('Receiving... ' + rxBuffer.length + ' bytes, ' + trkptCount + ' track point(s) so far.');
 
@@ -169,9 +196,23 @@ async function startDownload() {
   }
 }
 
+function showLiveStatus(text) {
+  // The comment spans two AT_PRINTF lines (kept short for the BLE MTU
+  // limit — see AT_GPX_get() in app_at.c), so there's a \r\n in the
+  // middle of it; \s* absorbs that.
+  const m = text.match(/<!--\s*battery=(-?\d+)%\s*temp=(-?\d+\.\d+)C\s*light=(-?\d+)\s*-->/);
+  if (!m) return;
+  liveBatEl.textContent = m[1] + '%';
+  liveTempEl.textContent = m[2] + '°C';
+  liveLightEl.textContent = m[3];
+  liveStatusEl.classList.add('show');
+}
+
 function finishDownload() {
   receiving = false;
   downloadBtn.disabled = false;
+
+  showLiveStatus(rxBuffer);
 
   const gpxStart = rxBuffer.indexOf('<?xml');
   const gpxEnd = rxBuffer.indexOf('</gpx>');

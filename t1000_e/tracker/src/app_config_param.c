@@ -37,6 +37,7 @@ app_param_t app_param =
         .uuid_num = 0, 
         .test_mode = 0,
         .lorawan_disabled = false, // default: LoRaWAN on
+        .drain_interval = 25, // default: 25 min, matches the pre-v31 hardcoded value
     }
 };
 

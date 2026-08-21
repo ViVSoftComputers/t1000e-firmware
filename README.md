@@ -1,10 +1,10 @@
-# T1000-E Tracker Firmware — v30
+# T1000-E Tracker Firmware — v31
 
-Built: 2026-08-18  
+Built: 2026-08-19  
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
-> **v30 adds a 5-click gesture to turn LoRaWAN off entirely — persisted across reboot — for using the tracker as a pure GPS+BLE logger.** GPS scanning and caching keep running unaffected either way; `AT+GPX` over BLE still works, so a device with LoRaWAN off is still fully usable, just silent on the radio. Built on `app_lora_stack_suspend()`/a new `app_lora_stack_resume()` counterpart and the existing FDS config-persistence pattern, so a device that's had LoRaWAN off for a while doesn't silently start rejoining after a power cycle. On top of v29's first Bluetooth release (AT+GPX, `gpx-downloader.html`, flash-checkpoint replay-loop fix), v28's join-independent scanning and GPS epoch fix, v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback.
+> **v31 fixes a downlink that never actually worked, adds a matching one for drain interval, and puts live battery/temp/light readings in the Bluetooth download.** The scan-interval downlink (`81 00 00 HH LL`, already documented below) had no handler behind it at all — every downlink silently did nothing since the code path that would apply it was missing. Fixed, and a new `83 00 00 HH LL` downlink controls the consumer's drain interval the same way. `AT+GPX` now opens with a live battery/temp/light reading (not from the cache — taken fresh, right when you ask) so BLE-only sessions aren't flying blind on battery, and every `<trkpt>` carries its own battery/temp/light as GPX `<extensions>`. On top of v30's 5-click LoRaWAN toggle, v29's first Bluetooth release (AT+GPX, `gpx-downloader.html`, flash-checkpoint replay-loop fix), v28's join-independent scanning and GPS epoch fix, v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback.
 
 ## 📖 Read the Full Article
 
@@ -24,10 +24,10 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## Flash
 
 1. Double-press the button to enter UF2 bootloader
-2. Drag the latest `t1000-e-v30-*.uf2` onto the USB drive
+2. Drag the latest `t1000-e-v31-*.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
-## v30 Button Behavior
+## v30 Button Behavior (unchanged in v31)
 
 | Press | Action | Beep Feedback |
 |---|---|---|
@@ -120,7 +120,7 @@ Pure motion gate — only cache entries when the device actually moves.
 
 Result: stationary device → empty cache → consumer fires on schedule, finds nothing, waits. Battery and airtime conserved.
 
-## BLE Console & GPX Download (v29)
+## BLE Console & GPX Download (v29, extended in v31)
 
 3-click starts BLE advertising, unchanged from prior versions — the device advertises as `T1000-E XXXX`. What's new is what you can do once connected: the same AT-command console already used over USB (`app_at.c`/`app_at_command.c`, ~40 commands) runs identically over this BLE connection via a Nordic-UART-style GATT service, so any generic BLE terminal app works, no companion app required.
 
@@ -138,13 +138,15 @@ Result: stationary device → empty cache → consumer fires on schedule, finds 
 3. Write `AT+GPX=?\r\n` (hex: `41 54 2B 47 50 58 3D 3F 0D 0A`) to the Write characteristic
 4. The response streams back as a GPX 1.1 `<trk>` — one `<trkpt>` per cache entry that has a GPS fix. WiFi/BLE-only entries are skipped; those need the LNS/backend to resolve a position, which the device doesn't have offline.
 
-**`gpx-downloader.html`** — a self-contained Web Bluetooth page (Chrome/Edge/Opera on desktop or Android; unsupported on iOS, all browsers, since WebKit doesn't implement Web Bluetooth) that does the same thing with a Connect + Download button and saves the result as a `.gpx` file via a normal browser download. Open it directly in Chrome.
+**Battery, temperature, and light (v31).** Right after the `<?xml?>` declaration, the response opens with an XML comment carrying a *live* reading — `<!-- battery=82% temp=23.5C light=64 -->` — taken fresh at the moment you send `AT+GPX=?`, not pulled from the cache. This is the one thing you can check without a LoRaWAN uplink, which is the point of using BLE at all — previously there was no way to see current battery while using the tracker over Bluetooth. Every `<trkpt>` also carries its own battery/temp/light as GPX `<extensions>`, decoded from the same fixed byte offsets (2/3-4/5-6) `app_tracker_scan_result_send()` already packs into every GPS-fix cache entry. Battery is 0-100%; light is a 0-100 relative level (not raw lux, despite the sensor function's name); temperature is signed, one decimal place.
+
+**`gpx-downloader.html`** — a self-contained Web Bluetooth page (Chrome/Edge/Opera on desktop or Android; unsupported on iOS, all browsers, since WebKit doesn't implement Web Bluetooth) that does the same thing with a Connect + Download button and saves the result as a `.gpx` file via a normal browser download. Open it directly in Chrome. The live battery/temp/light reading shows up in the page itself as soon as it arrives, before the rest of the download finishes.
 
 **Known quirk:** the device reboots on any BLE disconnect (`hal_mcu_reset()` in `app_ble_all.c`'s `ble_evt_handler`, pre-existing behavior from the original BLE-config flow, not something v29 added). Disconnecting after a GPX download reboots the tracker — expected, matches how the existing BLE-config flow has always worked.
 
 Each individual AT response line sent over BLE is kept under ~50 bytes on purpose (see `AT_GPX_get()` in `app_at.c`): `send_data_to_ble()`'s retry loop doesn't tolerate the SoftDevice error a GATT notification larger than the connected phone's negotiated ATT MTU would return, so longer responses are split across several short notifications rather than sent as one long one.
 
-## Architecture (v30)
+## Architecture (v31)
 
 ### Core Principle: Complete Separation
 
@@ -284,9 +286,11 @@ When out of range:
 10. **ISR-safe** — button ISR never calls modem API; all alarm operations happen in main loop context
 11. **120s drain timeout** — overall drain chain cap; resets and waits for next schedule
 
-## Configuring Scan Interval (Downlink)
+## Configuring Scan and Drain Interval (Downlink)
 
-Send a downlink on FPort 5 to change the periodic scan interval:
+**v31 fix:** this downlink was documented and presumably in use, but had no handler behind it — `app_lora_packet_downlink_decode()` referenced `DATA_ID_DW_PACKET_INTEVAL_PARAM` for a side effect (triggering a confirmation uplink) but never had a `case` for it, so the actual byte payload was never read and the interval never changed. Every downlink sent in this format silently did nothing. Fixed in v31; the format below is unchanged from what was already documented, so nothing about how you send it needs to change.
+
+Send a downlink on FPort 5 to change the periodic **scan** interval:
 
 | Interval | Hex Payload |
 |---|---|
@@ -298,8 +302,20 @@ Send a downlink on FPort 5 to change the periodic scan interval:
 | 60 min | `81 00 00 00 3C` |
 
 **Format:** `81 00 00 HH LL` where HH LL = interval in minutes (big-endian).  
-**How to send:** ChirpStack → Device → Queue → FPort 5 → Hex payload.  
-The new interval takes effect on the next scan cycle.
+The new interval takes effect on the next scan cycle, and persists across reboot (`app_param.hardware_info.pos_interval`).
+
+**New in v31:** the same downlink shape controls the consumer's **drain** interval — how often cached entries actually get sent, independent of how often scanning happens:
+
+| Interval | Hex Payload |
+|---|---|
+| 5 min | `83 00 00 00 05` |
+| 15 min | `83 00 00 00 0F` |
+| 25 min (default) | `83 00 00 00 19` |
+| 60 min | `83 00 00 00 3C` |
+
+**Format:** `83 00 00 HH LL`, same big-endian minutes encoding as the scan interval. Unlike the scan interval, this doesn't trigger an immediate action — it just confirms via a power-on uplink and applies on the consumer's next scheduled drain. Persists across reboot (`app_param.hardware_info.drain_interval`).
+
+**How to send either one:** ChirpStack → Device → Queue → FPort 5 → Hex payload.
 
 ## Cache
 

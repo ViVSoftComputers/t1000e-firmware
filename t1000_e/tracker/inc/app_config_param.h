@@ -115,6 +115,15 @@ typedef struct hardware_info
      * "LoRaWAN on" so every existing configured device keeps behaving
      * exactly as it always has after a v30 upgrade. */
     uint8_t lorawan_disabled;
+
+    /* v31: consumer drain interval in minutes, set via LoRaWAN downlink
+     * (DATA_ID_DW_PACKET_DRAIN_INTEVAL_PARAM). Also placed at the end and
+     * given a real default below (not 0) -- unlike lorawan_disabled, 0
+     * minutes has no safe meaning here, so a pre-v31 config falling back
+     * to app_param's compile-time default (25, matching the previous
+     * hardcoded tracker_drain_interval) is what keeps existing devices
+     * behaving the same after this upgrade, not a zero left untouched. */
+    uint16_t drain_interval;
 } hardware_info_t;
 
 #pragma pack( 4 )

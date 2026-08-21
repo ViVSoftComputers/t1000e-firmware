@@ -21,6 +21,7 @@ extern uint32_t gnss_scan_duration;
 extern uint32_t wifi_scan_duration;
 extern uint32_t ble_scan_duration;
 extern uint32_t tracker_periodic_interval;
+extern uint32_t tracker_drain_interval;
 
 extern uint8_t wifi_scan_max;
 extern uint8_t ble_scan_max;
@@ -96,6 +97,54 @@ void app_lora_packet_downlink_decode( uint8_t *buf, uint8_t len )
         data_id = buf[0];
         switch( data_id )
         {
+            /* v31: was referenced below (general_param_update's re-run trigger
+             * already checked for this data_id) but had no case here, so this
+             * downlink never actually did anything -- every byte just fell
+             * through to default. Wire format is the one already documented
+             * in the README's downlink table: `81 00 00 HH LL`, 5 bytes --
+             * data_id, 2 reserved/padding bytes, then minutes as a big-endian
+             * uint16 in the last 2 bytes. */
+            case DATA_ID_DW_PACKET_INTEVAL_PARAM:
+            {
+                if( len >= 5 )
+                {
+                    uint16_t minutes = 0;
+                    memcpyr( ( uint8_t * )( &minutes ), buf + 3, 2 );
+                    if( minutes >= 1 && minutes <= 1440 )
+                    {
+                        general_param_update = true;
+                        app_param.hardware_info.pos_interval = minutes;
+                        tracker_periodic_interval = ( uint32_t )minutes * 60;
+                        PRINTF( "tracker_periodic_interval = %u min\r\n", minutes );
+                    }
+                }
+            }
+            break;
+
+            /* v31: consumer drain interval, same `83 00 00 HH LL` wire
+             * format as INTEVAL_PARAM above. Unlike the scan interval,
+             * this doesn't force an immediate drain -- the power-on
+             * uplink below already confirms the config changed, and the
+             * new value applies on the consumer's own next scheduled
+             * tick (schedule_consumer() reads tracker_drain_interval
+             * live every time it's called). */
+            case DATA_ID_DW_PACKET_DRAIN_INTEVAL_PARAM:
+            {
+                if( len >= 5 )
+                {
+                    uint16_t minutes = 0;
+                    memcpyr( ( uint8_t * )( &minutes ), buf + 3, 2 );
+                    if( minutes >= 1 && minutes <= 1440 )
+                    {
+                        general_param_update = true;
+                        app_param.hardware_info.drain_interval = minutes;
+                        tracker_drain_interval = ( uint32_t )minutes * 60;
+                        PRINTF( "tracker_drain_interval = %u min\r\n", minutes );
+                    }
+                }
+            }
+            break;
+
             case DATA_ID_DW_PACKET_TRACK_TYPE:
             {
                 if(( buf[1] >= 0 && buf[1] <= 1 ) || ( buf[1] >= 3 && buf[1] <= 7 ))
@@ -179,6 +228,7 @@ void app_lora_packet_params_load( void )
     if( ble_scan_duration > 30 ) ble_scan_duration = 30;
 
     tracker_periodic_interval = (( uint32_t )app_param.hardware_info.pos_interval ) * 60;
+    tracker_drain_interval = (( uint32_t )app_param.hardware_info.drain_interval ) * 60;
 
     wifi_scan_max = app_param.hardware_info.wifi_max;
     ble_scan_max = app_param.hardware_info.beac_max;

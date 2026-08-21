@@ -9,6 +9,7 @@
 #include "app_at_fds_datas.h"
 #include "app_tracker_cache.h"
 #include "app_lora_packet.h"
+#include "sensor.h"
 
 #define tiny_sscanf sscanf
 
@@ -1339,6 +1340,24 @@ ATEerror_t AT_GPX_get(const char *param)
      * tolerate, hitting APP_ERROR_CHECK. Short, frequent notifications stay
      * safe across whatever MTU actually gets negotiated. */
     AT_PRINTF( "\r\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n" );
+
+    /* Live reading, taken right now -- not from the cache -- so a viewer
+     * always knows current device status even if the cache is empty or
+     * every entry in it is old. Same sensor calls AT+BAT/the scan path
+     * already use (sensor_bat_sample() etc.), just surfaced here too
+     * since this is the one thing you can check without a LoRaWAN
+     * uplink, which is the point of using BLE in the first place. */
+    {
+        int16_t live_bat = sensor_bat_sample( );
+        int16_t live_temp = sensor_ntc_sample( );
+        int16_t live_light = sensor_lux_sample( );
+        int16_t live_temp_abs = ( live_temp < 0 ) ? -live_temp : live_temp;
+
+        AT_PRINTF( "<!-- battery=%d%% temp=%s%d.%dC\r\n",
+                   live_bat, ( live_temp < 0 ) ? "-" : "", live_temp_abs / 10, live_temp_abs % 10 );
+        AT_PRINTF( " light=%d -->\r\n", live_light );
+    }
+
     AT_PRINTF( "<gpx version=\"1.1\" creator=\"T1000-E\"\r\n" );
     AT_PRINTF( " xmlns=\"http://www.topografix.com/GPX/1/1\">\r\n" );
     AT_PRINTF( "<trk><name>T1000-E cache</name><trkseg>\r\n" );
@@ -1380,11 +1399,28 @@ ATEerror_t AT_GPX_get(const char *param)
         uint16_t year; uint8_t month, day, hour, min, sec;
         epoch_to_utc( epoch, &year, &month, &day, &hour, &min, &sec );
 
+        /* Sensor header (battery/temp/light) sits at a fixed offset --
+         * bytes 2..6 -- regardless of gps_offset, which only moves where
+         * the GPS/lon/lat/epoch bytes start (see app_tracker_scan_result_send()).
+         * temp is degrees C x10 (matches get_heater_temperature()); light
+         * is a 0-100 relative level, not raw lux, despite the sensor_lux_*
+         * naming (see get_light_lv()); battery is already 0-100%. */
+        int8_t battery_pct = ( int8_t )data[2];
+        int16_t temp_raw, light_raw;
+        memcpyr( ( uint8_t * )( &temp_raw ), data + 3, 2 );
+        memcpyr( ( uint8_t * )( &light_raw ), data + 5, 2 );
+        int16_t temp_abs = ( temp_raw < 0 ) ? -temp_raw : temp_raw;
+
         AT_PRINTF( "<trkpt lat=\"%s%ld.%06ld\" lon=\"%s%ld.%06ld\">\r\n",
                    ( lat_raw < 0 ) ? "-" : "", ( long )( lat_abs / 1000000 ), ( long )( lat_abs % 1000000 ),
                    ( lon_raw < 0 ) ? "-" : "", ( long )( lon_abs / 1000000 ), ( long )( lon_abs % 1000000 ) );
-        AT_PRINTF( "<time>%04u-%02u-%02uT%02u:%02u:%02uZ</time></trkpt>\r\n",
+        AT_PRINTF( "<time>%04u-%02u-%02uT%02u:%02u:%02uZ</time>\r\n",
                    year, month, day, hour, min, sec );
+        AT_PRINTF( "<extensions><temp>%s%d.%d</temp>\r\n",
+                   ( temp_raw < 0 ) ? "-" : "", temp_abs / 10, temp_abs % 10 );
+        AT_PRINTF( "<light>%d</light><battery>%d</battery>\r\n",
+                   light_raw, battery_pct );
+        AT_PRINTF( "</extensions></trkpt>\r\n" );
     }
 
     AT_PRINTF( "</trkseg></trk></gpx>\r\n" );

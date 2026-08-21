@@ -24,6 +24,7 @@ extern "C" {
 
 #define DATA_ID_DW_PACKET_INTEVAL_PARAM     0x81
 #define DATA_ID_DW_PACKET_BUZER             0x82
+#define DATA_ID_DW_PACKET_DRAIN_INTEVAL_PARAM 0x83  /* v31: consumer drain interval, mirrors INTEVAL_PARAM's format */
 #define DATA_ID_DW_PACKET_TRACK_TYPE        0x86
 #define DATA_ID_DW_PACKET_POWEWR_SEND       0x88
 #define DATA_ID_DW_PACKET_REBOOT            0x89
