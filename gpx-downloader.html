@@ -105,6 +105,18 @@ const liveBatEl     = document.getElementById('liveBat');
 const liveTempEl    = document.getElementById('liveTemp');
 const liveLightEl   = document.getElementById('liveLight');
 
+// Built from character codes, not written as literal backslash escapes:
+// the CMS hosting this page strips backslashes out of pasted code, which
+// silently corrupted every escape sequence in an earlier version -- most
+// importantly turning the AT command's line terminator into two plain
+// letters, which the firmware's AT parser rejects outright (it requires
+// a real carriage-return-plus-linefeed terminator). That explains the
+// "stuck after 18 bytes" symptom: that 18-byte reply is literally the
+// firmware's own rejection message for a malformed command.
+const CR = String.fromCharCode(13);
+const LF = String.fromCharCode(10);
+const CRLF = CR + LF;
+
 let device = null;
 let writeChar = null;
 let notifyChar = null;
@@ -171,10 +183,10 @@ function onNotify(event) {
   const trkptCount = (rxBuffer.match(/<trkpt/g) || []).length;
   setStatus('Receiving... ' + rxBuffer.length + ' bytes, ' + trkptCount + ' track point(s) so far.');
 
-  // parse_cmd() always appends "\r\nOK\r\n" (or an error line) after the
+  // parse_cmd() always appends a CRLF OK (or an error line) after the
   // command's own output -- that's the reliable end-of-response marker,
   // not just the closing </gpx> tag.
-  if (rxBuffer.endsWith('OK\r\n')) {
+  if (rxBuffer.endsWith('OK' + CRLF)) {
     finishDownload();
   }
 }
@@ -186,7 +198,7 @@ async function startDownload() {
   downloadBtn.disabled = true;
   setStatus('Requesting GPX from tracker...');
 
-  const cmd = new TextEncoder().encode('AT+GPX=?\r\n');
+  const cmd = new TextEncoder().encode('AT+GPX=?' + CRLF);
   try {
     await writeChar.writeValue(cmd);
   } catch (err) {
@@ -198,9 +210,12 @@ async function startDownload() {
 
 function showLiveStatus(text) {
   // The comment spans two AT_PRINTF lines (kept short for the BLE MTU
-  // limit — see AT_GPX_get() in app_at.c), so there's a \r\n in the
-  // middle of it; \s* absorbs that.
-  const m = text.match(/<!--\s*battery=(-?\d+)%\s*temp=(-?\d+\.\d+)C\s*light=(-?\d+)\s*-->/);
+  // limit -- see AT_GPX_get() in app_at.c), so there's a line break in
+  // the middle of it. Written with plain character classes instead of
+  // the usual digit/whitespace/dot regex shorthand, so this file's
+  // source never needs a literal backslash anywhere -- see the CR/LF
+  // comment near the top of this script for why.
+  const m = text.match(/battery=(-?[0-9]+)%[^]*?temp=(-?[0-9]+[.][0-9]+)C[^]*?light=(-?[0-9]+)/);
   if (!m) return;
   liveBatEl.textContent = m[1] + '%';
   liveTempEl.textContent = m[2] + '°C';
@@ -214,13 +229,19 @@ function finishDownload() {
 
   showLiveStatus(rxBuffer);
 
-  const gpxStart = rxBuffer.indexOf('<?xml');
+  // Anchored on the <gpx> root tag rather than the XML declaration on
+  // purpose — same reason as the regex above, this file's source never
+  // spells out the "<" + "?" pair a template-aware CMS box might treat
+  // as a short-tag opener. The declaration is rebuilt below instead of
+  // relied on from the buffer.
+  const gpxStart = rxBuffer.indexOf('<gpx ');
   const gpxEnd = rxBuffer.indexOf('</gpx>');
   if (gpxStart === -1 || gpxEnd === -1) {
-    setStatus('Response finished but no valid GPX found:\n' + rxBuffer, 'err');
+    setStatus('Response finished but no valid GPX found:' + LF + rxBuffer, 'err');
     return;
   }
-  const gpxText = rxBuffer.slice(gpxStart, gpxEnd + '</gpx>'.length) + '\n';
+  const xmlDecl = '<' + '?xml version="1.0" encoding="UTF-8"?' + '>';
+  const gpxText = xmlDecl + LF + rxBuffer.slice(gpxStart, gpxEnd + '</gpx>'.length) + LF;
 
   const blob = new Blob([gpxText], { type: 'application/gpx+xml' });
   const url = URL.createObjectURL(blob);
