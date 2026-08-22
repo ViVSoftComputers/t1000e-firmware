@@ -98,7 +98,7 @@
   <h2>Scan &amp; Drain Interval</h2>
   <div class="config-row">
     <span>Scan interval: <b id="scanIntervalVal">&mdash;</b> min</span>
-    <span>Drain interval: <b id="drainIntervalVal">&mdash;</b> min</span>
+    <span>LoRa Drain interval: <b id="drainIntervalVal">&mdash;</b> min</span>
   </div>
   <div class="buttons">
     <button id="readConfigBtn" disabled>Read Config</button>
@@ -270,7 +270,7 @@ async function saveConfig() {
   const scanVal = parseInt(scanAnswer, 10);
 
   const drainAnswer = window.prompt(
-    'Drain interval, in minutes (1-' + MAX_MIN + '):',
+    'LoRa Drain interval, in minutes (1-' + MAX_MIN + '):',
     currentDrainInterval === null ? '' : String(currentDrainInterval)
   );
   if (drainAnswer === null) return; // cancelled
