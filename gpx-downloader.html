@@ -65,18 +65,8 @@
     border: 1px solid #e2e2e2;
   }
   .config h2 { font-size: 1.05em; margin: 0 0 12px; }
-  .config-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
-  .config-row label { flex: 1 1 160px; font-size: 0.9em; color: #444; }
-  .config-row input {
-    display: block;
-    width: 100%;
-    margin-top: 4px;
-    padding: 10px 12px;
-    font-size: 1em;
-    border-radius: 6px;
-    border: 1px solid #ccc;
-    box-sizing: border-box;
-  }
+  .config-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; font-size: 0.95em; }
+  .config-row b { color: #2563eb; }
 
   @media (min-width: 600px) {
     html { font-size: 16px; }
@@ -107,12 +97,8 @@
 <div class="config">
   <h2>Scan &amp; Drain Interval</h2>
   <div class="config-row">
-    <label>Scan interval (minutes)
-      <input type="number" id="scanIntervalInput" min="1" max="10080" inputmode="numeric">
-    </label>
-    <label>Drain interval (minutes)
-      <input type="number" id="drainIntervalInput" min="1" max="10080" inputmode="numeric">
-    </label>
+    <span>Scan interval: <b id="scanIntervalVal">&mdash;</b> min</span>
+    <span>Drain interval: <b id="drainIntervalVal">&mdash;</b> min</span>
   </div>
   <div class="buttons">
     <button id="readConfigBtn" disabled>Read Config</button>
@@ -139,8 +125,8 @@ const liveStatusEl  = document.getElementById('liveStatus');
 const liveBatEl     = document.getElementById('liveBat');
 const liveTempEl    = document.getElementById('liveTemp');
 const liveLightEl   = document.getElementById('liveLight');
-const scanIntervalInput  = document.getElementById('scanIntervalInput');
-const drainIntervalInput = document.getElementById('drainIntervalInput');
+const scanIntervalVal  = document.getElementById('scanIntervalVal');
+const drainIntervalVal = document.getElementById('drainIntervalVal');
 const readConfigBtn  = document.getElementById('readConfigBtn');
 const saveConfigBtn  = document.getElementById('saveConfigBtn');
 
@@ -152,6 +138,12 @@ const saveConfigBtn  = document.getElementById('saveConfigBtn');
 // a real carriage-return-plus-linefeed terminator). That explains the
 // "stuck after 18 bytes" symptom: that 18-byte reply is literally the
 // firmware's own rejection message for a malformed command.
+//
+// The same CMS also strips <input> tags entirely out of pasted HTML
+// (a security measure against embedding form fields in custom content),
+// so the scan/drain interval fields below are read-only <span>/<b> text
+// updated from JS, with window.prompt() for entering new values --
+// nothing here depends on any form element surviving the CMS's sanitizer.
 const CR = String.fromCharCode(13);
 const LF = String.fromCharCode(10);
 const CRLF = CR + LF;
@@ -238,6 +230,9 @@ function parseAtNumber(text) {
   return m ? parseInt(m[1], 10) : null;
 }
 
+let currentScanInterval = null;
+let currentDrainInterval = null;
+
 async function readConfig() {
   setActionButtonsEnabled(false);
   try {
@@ -247,8 +242,10 @@ async function readConfig() {
     if (scanVal === null || drainVal === null) {
       setStatus('Tracker did not return a valid config value.', 'err');
     } else {
-      scanIntervalInput.value = scanVal;
-      drainIntervalInput.value = drainVal;
+      currentScanInterval = scanVal;
+      currentDrainInterval = drainVal;
+      scanIntervalVal.textContent = scanVal;
+      drainIntervalVal.textContent = drainVal;
       setStatus('Config loaded -- scan every ' + scanVal + ' min, drain every ' + drainVal + ' min.', 'ok');
     }
   } catch (err) {
@@ -263,11 +260,24 @@ async function saveConfig() {
   // the device -- checked here too so a bad value gets a clear message
   // instead of a round trip that comes back AT_PARAM_ERROR.
   const MAX_MIN = 7 * 24 * 60;
-  const scanVal = parseInt(scanIntervalInput.value, 10);
-  const drainVal = parseInt(drainIntervalInput.value, 10);
-  const inRange = function (v) { return v >= 1 && v <= MAX_MIN; };
+  const inRange = function (v) { return !isNaN(v) && v >= 1 && v <= MAX_MIN; };
+
+  const scanAnswer = window.prompt(
+    'Scan interval, in minutes (1-' + MAX_MIN + '):',
+    currentScanInterval === null ? '' : String(currentScanInterval)
+  );
+  if (scanAnswer === null) return; // cancelled
+  const scanVal = parseInt(scanAnswer, 10);
+
+  const drainAnswer = window.prompt(
+    'Drain interval, in minutes (1-' + MAX_MIN + '):',
+    currentDrainInterval === null ? '' : String(currentDrainInterval)
+  );
+  if (drainAnswer === null) return; // cancelled
+  const drainVal = parseInt(drainAnswer, 10);
+
   if (!inRange(scanVal) || !inRange(drainVal)) {
-    setStatus('Enter a value between 1 and ' + MAX_MIN + ' minutes for both fields.', 'err');
+    setStatus('Enter a whole number between 1 and ' + MAX_MIN + ' minutes for both.', 'err');
     return;
   }
 
@@ -276,6 +286,10 @@ async function saveConfig() {
     setStatus('Saving config...');
     await sendAtCommand('AT+POS_INT=' + scanVal);
     await sendAtCommand('AT+DRAIN_INT=' + drainVal);
+    currentScanInterval = scanVal;
+    currentDrainInterval = drainVal;
+    scanIntervalVal.textContent = scanVal;
+    drainIntervalVal.textContent = drainVal;
     setStatus('Saved -- scan every ' + scanVal + ' min, drain every ' + drainVal + ' min. Takes effect immediately.', 'ok');
   } catch (err) {
     setStatus('Save failed: ' + err.message, 'err');
