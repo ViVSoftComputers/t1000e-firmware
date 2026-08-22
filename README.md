@@ -1,12 +1,12 @@
-# T1000-E Tracker Firmware — v31
+# T1000-E Tracker Firmware — v32
 
-Built: 2026-08-19  
+Built: 2026-08-21  
 Device: [Seeed SenseCAP Card Tracker T1000-E for LoRaWAN](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-LoRaWAN-p-6408.html?sensecap_affiliate=agiE1S0&referring_service=link) (nRF52840 + AG3335 GPS + LR1110 LoRa)  
 Based on: [Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board](https://github.com/Seeed-Studio/Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board) (commit `f3ad9d4`)
 
 > ⚠️ **LoRaWAN edition only.** This firmware is for the T1000-E **LoRaWAN** edition (the one with a printed DevEUI label). It is **not** for the Meshtastic edition — same hardware, but different firmware and no LoRaWAN credentials, so it won't join on a Meshtastic unit.
 
-> **v31 fixes a downlink that never actually worked, adds a matching one for drain interval, and puts live battery/temp/light readings in the Bluetooth download.** The scan-interval downlink (`81 00 00 HH LL`, already documented below) had no handler behind it at all — every downlink silently did nothing since the code path that would apply it was missing. Fixed, and a new `83 00 00 HH LL` downlink controls the consumer's drain interval the same way. `AT+GPX` now opens with a live battery/temp/light reading (not from the cache — taken fresh, right when you ask) so BLE-only sessions aren't flying blind on battery, and every `<trkpt>` carries its own battery/temp/light as GPX `<extensions>`. On top of v30's 5-click LoRaWAN toggle, v29's first Bluetooth release (AT+GPX, `gpx-downloader.html`, flash-checkpoint replay-loop fix), v28's join-independent scanning and GPS epoch fix, v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback.
+> **v32 brings scan/drain interval configuration to Bluetooth — read the current values, change them, and they apply immediately, no LoRaWAN downlink needed.** New `AT+DRAIN_INT` command, and `AT+POS_INT` (scan interval) fixed to actually apply live instead of only persisting for the next boot. `gpx-downloader.html` gets a Config section built on top of both: Read Config, edit the two fields, Save Config. On top of v31's downlink fixes and sensor data in the Bluetooth download, v30's 5-click LoRaWAN toggle, v29's first Bluetooth release (AT+GPX, flash-checkpoint replay-loop fix), v28's join-independent scanning and GPS epoch fix, v27's flash-backed cache checkpoint, v26's distinct beep patterns, and persistent LED feedback.
 
 ## What This Is For (and What It Isn't)
 
@@ -53,7 +53,7 @@ Detailed write-up with architecture diagrams, field test results, and flashing g
 ## Flash
 
 1. Double-press the button to enter UF2 bootloader
-2. Drag the latest `t1000-e-v31-*.uf2` onto the USB drive
+2. Drag the latest `t1000-e-v32-*.uf2` onto the USB drive
 3. Device reboots automatically after flashing (~10 seconds)
 
 ## Choosing a LoRaWAN Network
@@ -73,7 +73,7 @@ Onboarding is the same shape everywhere: register the device's **DevEUI + AppKey
 
 **One device, one live network at a time.** OTAA join sessions are per-server — the moment it joins a new network, the old one loses it. Either/or, not both.
 
-## v30 Button Behavior (unchanged in v31)
+## v30 Button Behavior (unchanged in v31/v32)
 
 | Press | Action | Beep Feedback |
 |---|---|---|
@@ -166,7 +166,7 @@ Pure motion gate — only cache entries when the device actually moves.
 
 Result: stationary device → empty cache → consumer fires on schedule, finds nothing, waits. Battery and airtime conserved.
 
-## BLE Console & GPX Download (v29, extended in v31)
+## BLE Console & GPX Download (v29, extended in v31 and v32)
 
 3-click starts BLE advertising, unchanged from prior versions — the device advertises as `T1000-E XXXX`. What's new is what you can do once connected: the same AT-command console already used over USB (`app_at.c`/`app_at_command.c`, ~40 commands) runs identically over this BLE connection via a Nordic-UART-style GATT service, so any generic BLE terminal app works, no companion app required.
 
@@ -188,11 +188,13 @@ Result: stationary device → empty cache → consumer fires on schedule, finds 
 
 **`gpx-downloader.html`** — a self-contained Web Bluetooth page (Chrome/Edge/Opera on desktop or Android; unsupported on iOS, all browsers, since WebKit doesn't implement Web Bluetooth) that does the same thing with a Connect + Download button and saves the result as a `.gpx` file via a normal browser download. Open it directly in Chrome, or use the hosted copy: **[vivsoft.live/t1000e](https://www.vivsoft.live/t1000e)**. The live battery/temp/light reading shows up in the page itself as soon as it arrives, before the rest of the download finishes.
 
+**Scan & drain interval, over BLE (v32).** The page also has a Config section: **Read Config** fetches the current scan and drain intervals straight from the tracker (`AT+POS_INT=?` / `AT+DRAIN_INT=?`), **Save Config** writes new values back (`AT+POS_INT=<min>` / `AT+DRAIN_INT=<min>`) and they take effect immediately — no reboot, no LoRaWAN downlink round trip needed. Same commands work from any BLE terminal app too. `AT+DRAIN_INT` is new in v32; `AT+POS_INT` already existed but used to only persist to flash for the next boot — fixed to apply live at the same time, matching how the v31 downlink already behaved for the same field.
+
 **Known quirk:** the device reboots on any BLE disconnect (`hal_mcu_reset()` in `app_ble_all.c`'s `ble_evt_handler`, pre-existing behavior from the original BLE-config flow, not something v29 added). Disconnecting after a GPX download reboots the tracker — expected, matches how the existing BLE-config flow has always worked.
 
 Each individual AT response line sent over BLE is kept under ~50 bytes on purpose (see `AT_GPX_get()` in `app_at.c`): `send_data_to_ble()`'s retry loop doesn't tolerate the SoftDevice error a GATT notification larger than the connected phone's negotiated ATT MTU would return, so longer responses are split across several short notifications rather than sent as one long one.
 
-## Architecture (v31)
+## Architecture (v32)
 
 ### Core Principle: Complete Separation
 
@@ -333,6 +335,8 @@ When out of range:
 11. **120s drain timeout** — overall drain chain cap; resets and waits for next schedule
 
 ## Configuring Scan and Drain Interval (Downlink)
+
+**v32 note:** both intervals can now also be read and changed over BLE — see the [BLE Console & GPX Download](#ble-console--gpx-download-v29-extended-in-v31-and-v32) section above — with no need for a gateway or LoRaWAN coverage at all. The downlink method below still works exactly as documented; use whichever fits (downlink for remote/scripted changes, BLE for in-person changes without a gateway).
 
 **v31 fix:** this downlink was documented and presumably in use, but had no handler behind it — `app_lora_packet_downlink_decode()` referenced `DATA_ID_DW_PACKET_INTEVAL_PARAM` for a side effect (triggering a confirmation uplink) but never had a `case` for it, so the actual byte payload was never read and the interval never changed. Every downlink sent in this format silently did nothing. Fixed in v31; the format below is unchanged from what was already documented, so nothing about how you send it needs to change.
 

@@ -80,6 +80,7 @@ typedef enum eATEerror
 /* Basic */
 #define AT_POS_STRATEGY     "+POS_STRATEGY"
 #define AT_POS_INT          "+POS_INT"
+#define AT_DRAIN_INT        "+DRAIN_INT"
 #define AT_SOS_MODE         "+SOS_MODE"
 #define AT_ACC_EN           "+ACC_EN"
 
@@ -474,7 +475,22 @@ ATEerror_t AT_POS_INT_get(const char *param);
 ATEerror_t AT_POS_INT_set(const char *param);
 
 /**
-  * @brief  
+  * @brief  Get consumer drain interval in minutes
+  * @param  param String parameter -- unused
+  * @retval AT_OK
+  */
+ATEerror_t AT_DRAIN_INT_get(const char *param);
+
+/**
+  * @brief  Set consumer drain interval in minutes -- applies live and
+  *         persists, same as AT_POS_INT_set
+  * @param  param String parameter -- interval in minutes
+  * @retval AT_OK if OK, or an appropriate AT_xxx error code
+  */
+ATEerror_t AT_DRAIN_INT_set(const char *param);
+
+/**
+  * @brief
   * @param  param String parameter
   * @retval AT_OK
   */

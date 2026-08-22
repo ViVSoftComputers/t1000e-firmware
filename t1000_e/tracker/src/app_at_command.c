@@ -337,6 +337,17 @@ static const struct ATCommand_s ATCommand[] =
     },
 
     {
+        .string = AT_DRAIN_INT,
+        .size_string = sizeof(AT_DRAIN_INT) - 1,
+        #ifndef NO_HELP
+        .help_string = "AT" AT_DRAIN_INT " Get or Set consumer drain interval (minutes)\r\n",
+        #endif /* !NO_HELP */
+        .get = AT_DRAIN_INT_get,
+        .set = AT_DRAIN_INT_set,
+        .run = AT_return_error,
+    },
+
+    {
         .string = AT_SOS_MODE,
         .size_string = sizeof(AT_SOS_MODE) - 1,
         #ifndef NO_HELP

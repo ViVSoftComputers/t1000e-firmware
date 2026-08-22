@@ -58,6 +58,25 @@
   }
   #liveStatus.show { display: flex; }
   #liveStatus b { color: #2563eb; }
+  .config {
+    margin: 28px 0 20px;
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid #e2e2e2;
+  }
+  .config h2 { font-size: 1.05em; margin: 0 0 12px; }
+  .config-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
+  .config-row label { flex: 1 1 160px; font-size: 0.9em; color: #444; }
+  .config-row input {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    padding: 10px 12px;
+    font-size: 1em;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+  }
 
   @media (min-width: 600px) {
     html { font-size: 16px; }
@@ -85,6 +104,22 @@
   <span>Light <b id="liveLight">&mdash;</b></span>
 </div>
 
+<div class="config">
+  <h2>Scan &amp; Drain Interval</h2>
+  <div class="config-row">
+    <label>Scan interval (minutes)
+      <input type="number" id="scanIntervalInput" min="1" max="10080" inputmode="numeric">
+    </label>
+    <label>Drain interval (minutes)
+      <input type="number" id="drainIntervalInput" min="1" max="10080" inputmode="numeric">
+    </label>
+  </div>
+  <div class="buttons">
+    <button id="readConfigBtn" disabled>Read Config</button>
+    <button id="saveConfigBtn" disabled>Save Config</button>
+  </div>
+</div>
+
 <div id="status">Not connected. Press 3-click on the tracker to start BLE advertising, then click Connect.</div>
 
 <p class="hint">Looks for a device named "T1000-E ...". Make sure the tracker is advertising (breathing LED, or press 3-click) before connecting.</p>
@@ -104,6 +139,10 @@ const liveStatusEl  = document.getElementById('liveStatus');
 const liveBatEl     = document.getElementById('liveBat');
 const liveTempEl    = document.getElementById('liveTemp');
 const liveLightEl   = document.getElementById('liveLight');
+const scanIntervalInput  = document.getElementById('scanIntervalInput');
+const drainIntervalInput = document.getElementById('drainIntervalInput');
+const readConfigBtn  = document.getElementById('readConfigBtn');
+const saveConfigBtn  = document.getElementById('saveConfigBtn');
 
 // Built from character codes, not written as literal backslash escapes:
 // the CMS hosting this page strips backslashes out of pasted code, which
@@ -123,9 +162,126 @@ let notifyChar = null;
 let rxBuffer = '';
 let receiving = false;
 
+// Which kind of exchange is in flight, since the two need different
+// "is this response complete" logic: 'gpx' is many-line and only ends
+// when the buffer ends with an OK status line (its own content is full
+// of internal line breaks, so "ends with a line break" alone would
+// trigger early); 'cmd' is the short single-line AT+POS_INT/AT+DRAIN_INT
+// get/set responses, where "ends with a line break" is a safe, generic
+// completion signal (see onNotify below).
+let currentOp = null;
+let cmdResolve = null;
+let cmdReject = null;
+let cmdTimeoutId = null;
+
 function setStatus(text, kind) {
   statusEl.textContent = text;
   statusEl.className = kind || '';
+}
+
+function setActionButtonsEnabled(enabled) {
+  downloadBtn.disabled = !enabled;
+  readConfigBtn.disabled = !enabled;
+  saveConfigBtn.disabled = !enabled;
+}
+
+// Generic "send an AT command, get the full response text back" building
+// block -- AT+GPX has its own hand-rolled flow below since its response
+// is large and needs incremental progress feedback, but config read/write
+// are both short request/response round trips and share this.
+function sendAtCommand(cmd, timeoutMs) {
+  return new Promise(function (resolve, reject) {
+    if (!writeChar) { reject(new Error('Not connected')); return; }
+    if (receiving) { reject(new Error('Busy with another operation')); return; }
+
+    rxBuffer = '';
+    receiving = true;
+    currentOp = 'cmd';
+    cmdResolve = resolve;
+    cmdReject = reject;
+    cmdTimeoutId = setTimeout(function () {
+      currentOp = null;
+      receiving = false;
+      cmdResolve = null;
+      const r = cmdReject;
+      cmdReject = null;
+      if (r) r(new Error('No response from tracker'));
+    }, timeoutMs || 5000);
+
+    const bytes = new TextEncoder().encode(cmd + CRLF);
+    writeChar.writeValue(bytes).catch(function (err) {
+      clearTimeout(cmdTimeoutId);
+      currentOp = null;
+      receiving = false;
+      cmdResolve = null;
+      const r = cmdReject;
+      cmdReject = null;
+      if (r) r(err);
+    });
+  });
+}
+
+function finishCmd() {
+  clearTimeout(cmdTimeoutId);
+  currentOp = null;
+  receiving = false;
+  const resolve = cmdResolve;
+  cmdResolve = null;
+  cmdReject = null;
+  if (resolve) resolve(rxBuffer);
+}
+
+// AT+POS_INT_get()/AT+DRAIN_INT_get() print just the bare number, so the
+// value is always whatever digits sit at the very start of the response.
+function parseAtNumber(text) {
+  const m = text.match(/^(-?[0-9]+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+async function readConfig() {
+  setActionButtonsEnabled(false);
+  try {
+    setStatus('Reading config...');
+    const scanVal = parseAtNumber(await sendAtCommand('AT+POS_INT=?'));
+    const drainVal = parseAtNumber(await sendAtCommand('AT+DRAIN_INT=?'));
+    if (scanVal === null || drainVal === null) {
+      setStatus('Tracker did not return a valid config value.', 'err');
+    } else {
+      scanIntervalInput.value = scanVal;
+      drainIntervalInput.value = drainVal;
+      setStatus('Config loaded -- scan every ' + scanVal + ' min, drain every ' + drainVal + ' min.', 'ok');
+    }
+  } catch (err) {
+    setStatus('Read config failed: ' + err.message, 'err');
+  } finally {
+    setActionButtonsEnabled(true);
+  }
+}
+
+async function saveConfig() {
+  // Same 1..7*24*60 bound AT_POS_INT_set()/AT_DRAIN_INT_set() enforce on
+  // the device -- checked here too so a bad value gets a clear message
+  // instead of a round trip that comes back AT_PARAM_ERROR.
+  const MAX_MIN = 7 * 24 * 60;
+  const scanVal = parseInt(scanIntervalInput.value, 10);
+  const drainVal = parseInt(drainIntervalInput.value, 10);
+  const inRange = function (v) { return v >= 1 && v <= MAX_MIN; };
+  if (!inRange(scanVal) || !inRange(drainVal)) {
+    setStatus('Enter a value between 1 and ' + MAX_MIN + ' minutes for both fields.', 'err');
+    return;
+  }
+
+  setActionButtonsEnabled(false);
+  try {
+    setStatus('Saving config...');
+    await sendAtCommand('AT+POS_INT=' + scanVal);
+    await sendAtCommand('AT+DRAIN_INT=' + drainVal);
+    setStatus('Saved -- scan every ' + scanVal + ' min, drain every ' + drainVal + ' min. Takes effect immediately.', 'ok');
+  } catch (err) {
+    setStatus('Save failed: ' + err.message, 'err');
+  } finally {
+    setActionButtonsEnabled(true);
+  }
 }
 
 async function connect() {
@@ -147,7 +303,7 @@ async function connect() {
     notifyChar.addEventListener('characteristicvaluechanged', onNotify);
 
     connectBtn.disabled = true;
-    downloadBtn.disabled = false;
+    setActionButtonsEnabled(true);
     disconnectBtn.disabled = false;
     setStatus('Connected to ' + device.name + '.', 'ok');
   } catch (err) {
@@ -163,11 +319,15 @@ function disconnect() {
 
 function onDisconnected() {
   connectBtn.disabled = false;
-  downloadBtn.disabled = true;
+  setActionButtonsEnabled(false);
   disconnectBtn.disabled = true;
   writeChar = null;
   notifyChar = null;
   receiving = false;
+  currentOp = null;
+  if (cmdTimeoutId) { clearTimeout(cmdTimeoutId); cmdTimeoutId = null; }
+  cmdResolve = null;
+  cmdReject = null;
   setStatus('Disconnected. The tracker reboots on BLE disconnect, so wait for it to re-advertise before reconnecting.');
 }
 
@@ -175,6 +335,18 @@ function onNotify(event) {
   if (!receiving) return;
   const chunk = new TextDecoder('utf-8').decode(event.target.value);
   rxBuffer += chunk;
+
+  if (currentOp === 'cmd') {
+    // Short single-line responses (config get/set) -- these never print
+    // anything with an internal line break of their own, so the response
+    // is complete as soon as one arrives at all. Unlike the GPX case
+    // below, whose content is full of internal line breaks, so this
+    // check would fire far too early there.
+    if (rxBuffer.endsWith(CRLF)) {
+      finishCmd();
+    }
+    return;
+  }
 
   // Arrives near the start of the response, well before the full cache
   // dump finishes, so show it the moment it's in rather than waiting.
@@ -193,9 +365,11 @@ function onNotify(event) {
 
 async function startDownload() {
   if (!writeChar) return;
+  if (receiving) { setStatus('Busy with another operation, please wait.', 'err'); return; }
   rxBuffer = '';
   receiving = true;
-  downloadBtn.disabled = true;
+  currentOp = 'gpx';
+  setActionButtonsEnabled(false);
   setStatus('Requesting GPX from tracker...');
 
   const cmd = new TextEncoder().encode('AT+GPX=?' + CRLF);
@@ -203,7 +377,8 @@ async function startDownload() {
     await writeChar.writeValue(cmd);
   } catch (err) {
     receiving = false;
-    downloadBtn.disabled = false;
+    currentOp = null;
+    setActionButtonsEnabled(true);
     setStatus('Write failed: ' + err.message, 'err');
   }
 }
@@ -224,8 +399,9 @@ function showLiveStatus(text) {
 }
 
 function finishDownload() {
+  currentOp = null;
   receiving = false;
-  downloadBtn.disabled = false;
+  setActionButtonsEnabled(true);
 
   showLiveStatus(rxBuffer);
 
@@ -260,6 +436,8 @@ function finishDownload() {
 connectBtn.addEventListener('click', connect);
 downloadBtn.addEventListener('click', startDownload);
 disconnectBtn.addEventListener('click', disconnect);
+readConfigBtn.addEventListener('click', readConfig);
+saveConfigBtn.addEventListener('click', saveConfig);
 
 if (!navigator.bluetooth) {
   setStatus('Web Bluetooth is not available in this browser. Use Chrome, Edge, or Opera on desktop or Android.', 'err');

@@ -16,6 +16,12 @@
 #define SE_KEY_SIZE SMTC_MODEM_KEY_LENGTH
 #define SE_EUI_SIZE SMTC_MODEM_EUI_LENGTH
 
+/* v32: so AT+POS_INT/AT+DRAIN_INT can apply live over BLE, not just persist
+ * to flash for the next boot -- same globals app_lora_packet.c already
+ * mirrors for the downlink path. */
+extern uint32_t tracker_periodic_interval;
+extern uint32_t tracker_drain_interval;
+
 uint8_t at_config_flag = NO_MODIFICATION;
 uint8_t parse_cmd_type = 0;
 
@@ -1062,21 +1068,57 @@ ATEerror_t AT_POS_INT_set(const char *param) {
     uint16_t interval_temp=0;
     if (1 != tiny_sscanf(param, "%hu", &interval_temp))
     {
-        return AT_PARAM_ERROR;        
+        return AT_PARAM_ERROR;
     }
-    if (interval_temp>7*24*60||interval_temp<1) 
+    if (interval_temp>7*24*60||interval_temp<1)
     {
         return AT_PARAM_ERROR;
     }
     if(app_param.hardware_info.pos_interval != interval_temp)
     {
         app_param.hardware_info.pos_interval = interval_temp;
+        /* v32: apply live, not just on the next boot -- this used to only
+         * update the persisted config, so setting it over BLE looked like
+         * it worked (AT+POS_INT=? would read back the new value) but had
+         * no actual effect until a reboot. Matches what the v31 downlink
+         * already does for the same field. */
+        tracker_periodic_interval = ( uint32_t )interval_temp * 60;
         check_save_param_type();
-         
+
     }
     return AT_OK;
 }
 /*------------------------AT+POS_INT=?\r\n-------------------------------------*/
+
+/*------------------------AT+DRAIN_INT=?\r\n-------------------------------------*/
+/* v32: consumer drain interval, same shape as AT_POS_INT above -- lets
+ * the BLE console (and gpx-downloader.html's config section) read and
+ * change it the same way the v31 downlink does, without needing a
+ * LoRaWAN uplink/downlink round trip. */
+ATEerror_t AT_DRAIN_INT_get(const char *param) {
+    AT_PRINTF("%d",app_param.hardware_info.drain_interval);
+    return AT_OK;
+}
+
+ATEerror_t AT_DRAIN_INT_set(const char *param) {
+    uint16_t interval_temp=0;
+    if (1 != tiny_sscanf(param, "%hu", &interval_temp))
+    {
+        return AT_PARAM_ERROR;
+    }
+    if (interval_temp>7*24*60||interval_temp<1)
+    {
+        return AT_PARAM_ERROR;
+    }
+    if(app_param.hardware_info.drain_interval != interval_temp)
+    {
+        app_param.hardware_info.drain_interval = interval_temp;
+        tracker_drain_interval = ( uint32_t )interval_temp * 60;
+        check_save_param_type();
+    }
+    return AT_OK;
+}
+/*------------------------AT+DRAIN_INT=?\r\n-------------------------------------*/
 
 /*------------------------AT+SOS_MODE=?\r\n-------------------------------------*/
 ATEerror_t AT_SOS_MODE_get(const char *param) {
