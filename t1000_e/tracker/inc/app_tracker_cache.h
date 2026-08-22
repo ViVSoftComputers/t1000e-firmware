@@ -20,7 +20,7 @@
 #include <stdbool.h>
 
 /* Firmware version - embedded in every uplink */
-#define FIRMWARE_VERSION           31  /* v31: fix interval downlink, drain-interval downlink, sensor data in GPX */
+#define FIRMWARE_VERSION           32  /* v32: read/write scan + drain interval over BLE (AT+DRAIN_INT) */
 
 #define TRACKER_CACHE_MAX_DEPTH   1000   /* ~166h of 10-min intervals */
 #define TRACKER_CACHE_MAX_SIZE    128   /* max LoRaWAN payload size */
