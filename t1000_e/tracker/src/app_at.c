@@ -10,6 +10,7 @@
 #include "app_tracker_cache.h"
 #include "app_lora_packet.h"
 #include "sensor.h"
+#include "app_button.h" /* TRACKER_STATE_BIT8_USER, for AT_GPX_get()'s waypoints */
 
 #define tiny_sscanf sscanf
 
@@ -1365,14 +1366,97 @@ static void epoch_to_utc( uint32_t epoch, uint16_t *year, uint8_t *month, uint8_
     *day = days + 1;
 }
 
-/* Stream the cache's GPS-fix entries as a GPX 1.1 track. Each cache entry
- * holds the already-encoded uplink payload, not decoded coordinates -- the
- * lon/lat/epoch offsets below mirror exactly how app_tracker_scan_result_send()
- * in main_lorawan_tracker.c packs them (7-byte sensor header, +6 more if
+/* One decoded cache entry, ready to print as either a <wpt> or a <trkpt> --
+ * shared between the two passes in AT_GPX_get() below. */
+typedef struct
+{
+    int32_t  lat_raw, lon_raw; /* degrees x1e6, memcpyr'd from the payload */
+    uint32_t epoch;
+    int8_t   battery_pct;      /* already 0-100% */
+    int16_t  temp_raw;         /* degrees C x10, signed */
+    int16_t  light_raw;        /* 0-100 relative level, not raw lux */
+    bool     is_user;          /* set by a 1-click (TRACKER_STATE_BIT8_USER) */
+} gpx_entry_t;
+
+/* Decodes cache slot idx into *out. Each cache entry holds the
+ * already-encoded uplink payload, not decoded coordinates -- the offsets
+ * below mirror exactly how app_tracker_scan_result_send() in
+ * main_lorawan_tracker.c packs them (7-byte sensor header, +6 more if
  * accelerometer data is present, then lon/lat/epoch as memcpyr'd int32s).
  * Only DATA_ID_UP_PACKET_GPS_SEN_*_BAT entries carry coordinates -- WiFi/BLE
  * entries are resolved to a position by the LNS/backend, not locally, so
- * they're skipped here. */
+ * this returns false for those. */
+static bool decode_gpx_entry( uint16_t idx, gpx_entry_t *out )
+{
+    uint8_t len;
+    uint32_t ts;
+    uint8_t *data = tracker_cache_get( idx, &len, &ts );
+    (void)ts; /* real fix time comes from the embedded GPS epoch below */
+    if( data == NULL ) return false;
+
+    uint8_t gps_offset;
+    if( data[0] == DATA_ID_UP_PACKET_GPS_SEN_ACC_BAT )
+    {
+        gps_offset = 13; /* 7-byte sensor header + 6-byte accelerometer */
+    }
+    else if( data[0] == DATA_ID_UP_PACKET_GPS_SEN_BAT )
+    {
+        gps_offset = 7;
+    }
+    else
+    {
+        return false; /* no coordinates in this entry */
+    }
+
+    if( len < gps_offset + 12 ) return false; /* need lon + lat + epoch */
+
+    memcpyr( ( uint8_t * )( &out->lon_raw ), data + gps_offset, 4 );
+    memcpyr( ( uint8_t * )( &out->lat_raw ), data + gps_offset + 4, 4 );
+    memcpyr( ( uint8_t * )( &out->epoch ), data + gps_offset + 8, 4 );
+
+    /* Sensor header (battery/temp/light) sits at a fixed offset -- bytes
+     * 2..6 -- regardless of gps_offset, which only moves where the
+     * GPS/lon/lat/epoch bytes start. temp is degrees C x10 (matches
+     * get_heater_temperature()); light is a 0-100 relative level, not raw
+     * lux, despite the sensor_lux_* naming (see get_light_lv()); battery
+     * is already 0-100%. */
+    out->battery_pct = ( int8_t )data[2];
+    memcpyr( ( uint8_t * )( &out->temp_raw ), data + 3, 2 );
+    memcpyr( ( uint8_t * )( &out->light_raw ), data + 5, 2 );
+
+    /* Set by a 1-click ("Point of Interest") request -- app_tracker_new_run()
+     * is only ever called with TRACKER_STATE_BIT8_USER from
+     * BUTTON_ACTION_SCAN_NOW in main_lorawan_tracker.c; turbo/scheduled
+     * scans use a separate runtime flag that never reaches the payload, so
+     * this bit unambiguously means "the user pressed the button here". */
+    out->is_user = ( data[1] & TRACKER_STATE_BIT8_USER ) != 0;
+
+    return true;
+}
+
+/* Prints the <extensions> block shared by <wpt> and <trkpt>. Temperature
+ * uses Garmin's TrackPointExtension schema (gpxtpx:atemp) since that's
+ * widely recognized by GPX-consuming apps generally; light/battery have no
+ * equivalent standard field, so they stay as plain custom tags -- present
+ * in the file for anything that parses it directly, even where a given
+ * viewer doesn't render them. */
+static void print_gpx_extensions( const gpx_entry_t *e )
+{
+    int16_t temp_abs = ( e->temp_raw < 0 ) ? -e->temp_raw : e->temp_raw;
+    AT_PRINTF( "<extensions><gpxtpx:TrackPointExtension>\r\n" );
+    AT_PRINTF( "<gpxtpx:atemp>%s%d.%d</gpxtpx:atemp>\r\n",
+               ( e->temp_raw < 0 ) ? "-" : "", temp_abs / 10, temp_abs % 10 );
+    AT_PRINTF( "</gpxtpx:TrackPointExtension>\r\n" );
+    AT_PRINTF( "<battery>%d</battery><light>%d</light>\r\n",
+               e->battery_pct, e->light_raw );
+    AT_PRINTF( "</extensions>\r\n" );
+}
+
+/* Stream the cache's GPS-fix entries as a GPX 1.1 file: 1-click ("Point of
+ * Interest") entries as standalone <wpt> waypoints -- the way GPX viewers
+ * render a distinct marker, separate from the route line -- plus the full
+ * <trk> track, which still includes those same points (a waypoint is an
+ * extra marker here, not a replacement for being on the route). */
 ATEerror_t AT_GPX_get(const char *param)
 {
     /* Every AT_PRINTF here is kept well under ~50 bytes on purpose: each
@@ -1401,68 +1485,66 @@ ATEerror_t AT_GPX_get(const char *param)
     }
 
     AT_PRINTF( "<gpx version=\"1.1\" creator=\"T1000-E\"\r\n" );
-    AT_PRINTF( " xmlns=\"http://www.topografix.com/GPX/1/1\">\r\n" );
-    AT_PRINTF( "<trk><name>T1000-E cache</name><trkseg>\r\n" );
+    AT_PRINTF( " xmlns=\"http://www.topografix.com/GPX/1/1\"\r\n" );
+    /* Split with NO \r\n at the break -- unlike the attribute-boundary
+     * splits above, this one is mid-URI: a \r\n here would land inside
+     * the xmlns:gpxtpx value itself (XML normalizes it to a space per
+     * attribute-value-normalization rules), corrupting the namespace URI
+     * that consuming apps match against. */
+    AT_PRINTF( " xmlns:gpxtpx=\"http://www.garmin.com/xmlschemas/" );
+    AT_PRINTF( "TrackPointExtension/v1\">\r\n" );
 
     uint16_t count = tracker_cache_count( );
+
+    /* Pass 1: <wpt> waypoints for 1-click entries only. GPX 1.1 requires
+     * <wpt> elements before <trk> in document order, so this has to be a
+     * separate pass over the cache -- can't interleave it with the <trk>
+     * loop below without violating that. */
+    uint16_t wpt_num = 0;
     for( uint16_t i = 0; i < count; i++ )
     {
-        uint8_t len;
-        uint32_t ts;
-        uint8_t *data = tracker_cache_get( i, &len, &ts );
-        (void)ts; /* real fix time comes from the embedded GPS epoch below */
-        if( data == NULL ) continue;
+        gpx_entry_t e;
+        if( !decode_gpx_entry( i, &e ) || !e.is_user ) continue;
 
-        uint8_t gps_offset;
-        if( data[0] == DATA_ID_UP_PACKET_GPS_SEN_ACC_BAT )
-        {
-            gps_offset = 13; /* 7-byte sensor header + 6-byte accelerometer */
-        }
-        else if( data[0] == DATA_ID_UP_PACKET_GPS_SEN_BAT )
-        {
-            gps_offset = 7;
-        }
-        else
-        {
-            continue; /* no coordinates in this entry */
-        }
-
-        if( len < gps_offset + 12 ) continue; /* need lon + lat + epoch */
-
-        int32_t lon_raw, lat_raw;
-        uint32_t epoch;
-        memcpyr( ( uint8_t * )( &lon_raw ), data + gps_offset, 4 );
-        memcpyr( ( uint8_t * )( &lat_raw ), data + gps_offset + 4, 4 );
-        memcpyr( ( uint8_t * )( &epoch ), data + gps_offset + 8, 4 );
-
-        int32_t lat_abs = ( lat_raw < 0 ) ? -lat_raw : lat_raw;
-        int32_t lon_abs = ( lon_raw < 0 ) ? -lon_raw : lon_raw;
-
+        wpt_num++;
+        int32_t lat_abs = ( e.lat_raw < 0 ) ? -e.lat_raw : e.lat_raw;
+        int32_t lon_abs = ( e.lon_raw < 0 ) ? -e.lon_raw : e.lon_raw;
         uint16_t year; uint8_t month, day, hour, min, sec;
-        epoch_to_utc( epoch, &year, &month, &day, &hour, &min, &sec );
+        epoch_to_utc( e.epoch, &year, &month, &day, &hour, &min, &sec );
 
-        /* Sensor header (battery/temp/light) sits at a fixed offset --
-         * bytes 2..6 -- regardless of gps_offset, which only moves where
-         * the GPS/lon/lat/epoch bytes start (see app_tracker_scan_result_send()).
-         * temp is degrees C x10 (matches get_heater_temperature()); light
-         * is a 0-100 relative level, not raw lux, despite the sensor_lux_*
-         * naming (see get_light_lv()); battery is already 0-100%. */
-        int8_t battery_pct = ( int8_t )data[2];
-        int16_t temp_raw, light_raw;
-        memcpyr( ( uint8_t * )( &temp_raw ), data + 3, 2 );
-        memcpyr( ( uint8_t * )( &light_raw ), data + 5, 2 );
-        int16_t temp_abs = ( temp_raw < 0 ) ? -temp_raw : temp_raw;
-
-        AT_PRINTF( "<trkpt lat=\"%s%ld.%06ld\" lon=\"%s%ld.%06ld\">\r\n",
-                   ( lat_raw < 0 ) ? "-" : "", ( long )( lat_abs / 1000000 ), ( long )( lat_abs % 1000000 ),
-                   ( lon_raw < 0 ) ? "-" : "", ( long )( lon_abs / 1000000 ), ( long )( lon_abs % 1000000 ) );
+        AT_PRINTF( "<wpt lat=\"%s%ld.%06ld\" lon=\"%s%ld.%06ld\">\r\n",
+                   ( e.lat_raw < 0 ) ? "-" : "", ( long )( lat_abs / 1000000 ), ( long )( lat_abs % 1000000 ),
+                   ( e.lon_raw < 0 ) ? "-" : "", ( long )( lon_abs / 1000000 ), ( long )( lon_abs % 1000000 ) );
         AT_PRINTF( "<time>%04u-%02u-%02uT%02u:%02u:%02uZ</time>\r\n",
                    year, month, day, hour, min, sec );
-        AT_PRINTF( "<extensions><temp>%s%d.%d</temp>\r\n",
-                   ( temp_raw < 0 ) ? "-" : "", temp_abs / 10, temp_abs % 10 );
-        AT_PRINTF( "<light>%d</light><battery>%d</battery>\r\n",
-                   light_raw, battery_pct );
-        AT_PRINTF( "</extensions></trkpt>\r\n" );
+        AT_PRINTF( "<name>User Point %u</name>\r\n", wpt_num );
+        AT_PRINTF( "<sym>Flag, Blue</sym>\r\n" );
+        print_gpx_extensions( &e );
+        AT_PRINTF( "</wpt>\r\n" );
+    }
+
+    AT_PRINTF( "<trk><name>T1000-E cache</name><trkseg>\r\n" );
+
+    /* Pass 2: the full track, every GPS-fix entry -- including the 1-click
+     * ones already emitted as waypoints above; they stay part of the
+     * continuous route too. */
+    for( uint16_t i = 0; i < count; i++ )
+    {
+        gpx_entry_t e;
+        if( !decode_gpx_entry( i, &e ) ) continue;
+
+        int32_t lat_abs = ( e.lat_raw < 0 ) ? -e.lat_raw : e.lat_raw;
+        int32_t lon_abs = ( e.lon_raw < 0 ) ? -e.lon_raw : e.lon_raw;
+        uint16_t year; uint8_t month, day, hour, min, sec;
+        epoch_to_utc( e.epoch, &year, &month, &day, &hour, &min, &sec );
+
+        AT_PRINTF( "<trkpt lat=\"%s%ld.%06ld\" lon=\"%s%ld.%06ld\">\r\n",
+                   ( e.lat_raw < 0 ) ? "-" : "", ( long )( lat_abs / 1000000 ), ( long )( lat_abs % 1000000 ),
+                   ( e.lon_raw < 0 ) ? "-" : "", ( long )( lon_abs / 1000000 ), ( long )( lon_abs % 1000000 ) );
+        AT_PRINTF( "<time>%04u-%02u-%02uT%02u:%02u:%02uZ</time>\r\n",
+                   year, month, day, hour, min, sec );
+        print_gpx_extensions( &e );
+        AT_PRINTF( "</trkpt>\r\n" );
     }
 
     AT_PRINTF( "</trkseg></trk></gpx>\r\n" );
